@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 
+type RetirementStrategy = "income_crossover" | "safe_fire";
+
 interface FireInputs {
   currentBalance: number;
   annualReturn: number;
@@ -9,16 +11,20 @@ interface FireInputs {
   retirementAge: number;
   inflationRate: number;
   safeWithdrawalRate: number;
+  retirementStrategy: RetirementStrategy;
 }
 
 interface YearlyData {
   age: number;
   year: number;
   balance: number;
+  annualContribution: number;
   annualExpense: number;
   investmentIncome: number;
+  safeWithdrawalAmount: number;
   fireNumber: number;
   isFireAchieved: boolean;
+  isIncomeCrossover: boolean;
 }
 
 const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
@@ -31,6 +37,7 @@ const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
     retirementAge,
     inflationRate,
     safeWithdrawalRate,
+    retirementStrategy,
   } = inputs;
 
   const projection: YearlyData[] = [];
@@ -45,24 +52,34 @@ const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
     
     const adjustedAnnualExpense = annualExpense * Math.pow(1 + inflationRate / 100, i);
     const fireNumber = adjustedAnnualExpense / (safeWithdrawalRate / 100);
-    const investmentIncome = balance * (safeWithdrawalRate / 100);
-    const isFireAchieved = investmentIncome >= adjustedAnnualExpense;
+    const investmentIncome = balance * (annualReturn / 100);
+    const safeWithdrawalAmount = balance * (safeWithdrawalRate / 100);
+    const isIncomeCrossover = investmentIncome >= adjustedAnnualExpense;
+    const isFireAchieved = safeWithdrawalAmount >= adjustedAnnualExpense;
+
+    const isRetired = retirementStrategy === "income_crossover"
+      ? isIncomeCrossover
+      : isFireAchieved;
+    const shouldContribute = age < retirementAge && !isRetired;
+    const annualContribution = shouldContribute ? monthlyContribution * 12 : 0;
 
     projection.push({
       age,
       year,
       balance: Math.round(balance),
+      annualContribution,
       annualExpense: Math.round(adjustedAnnualExpense),
       investmentIncome: Math.round(investmentIncome),
+      safeWithdrawalAmount: Math.round(safeWithdrawalAmount),
       fireNumber: Math.round(fireNumber),
       isFireAchieved,
+      isIncomeCrossover,
     });
 
     const growth = balance * (annualReturn / 100);
-    const shouldContribute = age < retirementAge && !isFireAchieved;
-    const annualContribution = shouldContribute ? monthlyContribution * 12 : 0;
-    
-    balance = balance + growth + annualContribution;
+    const withdrawal = isRetired ? adjustedAnnualExpense : 0;
+
+    balance = balance + growth + annualContribution - withdrawal;
   }
 
   return projection;
@@ -81,6 +98,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 3,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -90,7 +108,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
       expect(year0.age).toBe(30);
       expect(year0.balance).toBe(50000);
       expect(year0.annualExpense).toBe(36000);
-      expect(year0.investmentIncome).toBe(2000);
+      expect(year0.investmentIncome).toBe(3500); // 7% of 50000
       expect(year0.fireNumber).toBe(900000);
       expect(year0.isFireAchieved).toBe(false);
     });
@@ -107,6 +125,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 3,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -133,6 +152,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 0,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -155,6 +175,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 0,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -174,12 +195,14 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 0,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
 
       expect(projection[0].isFireAchieved).toBe(true);
-      expect(projection[1].balance).toBeCloseTo(900000 * 1.07, -1);
+      // Year 1: 900k + 7% growth - 36k expenses = 900k * 1.07 - 36k = 927k
+      expect(projection[1].balance).toBeCloseTo(900000 * 1.07 - 36000, -1);
     });
 
     it("should stop contributions at retirement age", () => {
@@ -192,6 +215,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 0,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -213,6 +237,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 2,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -230,15 +255,19 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 3,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
 
       projection.forEach((year) => {
-        const expectedIncome = Math.round(year.balance * 0.04);
+        // Investment income should be annualReturn%, not safe withdrawal rate
+        const expectedIncome = Math.round(year.balance * 0.07);
         expect(year.investmentIncome).toBe(expectedIncome);
 
-        const isAchieved = year.investmentIncome >= year.annualExpense;
+        // FIRE is achieved when safe withdrawal (4%) >= expenses
+        const safeWithdrawal = year.balance * 0.04;
+        const isAchieved = safeWithdrawal >= year.annualExpense;
         expect(year.isFireAchieved).toBe(isAchieved);
       });
     });
@@ -255,6 +284,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 3,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -275,6 +305,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 2,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -293,6 +324,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 10,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -312,12 +344,14 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 2,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
 
       expect(projection[0].isFireAchieved).toBe(true);
-      expect(projection[1].balance).toBe(projection[0].balance * 1.05);
+      // Year 1: 1M + 5% growth - 24k expenses = 1M * 1.05 - 24k
+      expect(projection[1].balance).toBeCloseTo(projection[0].balance * 1.05 - 24000, -1);
     });
   });
 
@@ -332,6 +366,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
         retirementAge: 65,
         inflationRate: 3,
         safeWithdrawalRate: 4,
+        retirementStrategy: "safe_fire",
       };
 
       const projection = calculateFireProjection(inputs);
@@ -348,7 +383,10 @@ describe("FIRE Calculator - Calculation Verification", () => {
       const fireIndex = projection.findIndex((p) => p.isFireAchieved);
       if (fireIndex < projection.length - 1) {
         const afterFireYear = projection[fireIndex + 1];
-        const expectedBalance = fireYear!.balance * 1.07;
+        // After FIRE: balance grows by 7% but expenses are withdrawn
+        const fireYearExpense = projection[fireIndex].annualExpense;
+        const inflatedExpense = fireYearExpense * 1.03; // Next year's expense
+        const expectedBalance = fireYear!.balance * 1.07 - inflatedExpense;
         expect(afterFireYear.balance).toBeCloseTo(expectedBalance, -1);
       }
     });

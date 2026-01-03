@@ -13,9 +13,13 @@ export function useAuth(options?: UseAuthOptions) {
     options ?? {};
   const utils = trpc.useUtils();
 
+  // DEV MODE: Skip auth query if OAuth not configured
+  const isOAuthConfigured = Boolean(import.meta.env.VITE_OAUTH_PORTAL_URL && import.meta.env.VITE_APP_ID);
+
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
+    enabled: isOAuthConfigured,
   });
 
   const logoutMutation = trpc.auth.logout.useMutation({
@@ -42,15 +46,24 @@ export function useAuth(options?: UseAuthOptions) {
   }, [logoutMutation, utils]);
 
   const state = useMemo(() => {
+    // DEV MODE: Mock user if OAuth not configured
+    const mockUser = !isOAuthConfigured ? {
+      id: "dev-user",
+      name: "Dev User",
+      email: "dev@localhost"
+    } : null;
+
+    const user = meQuery.data ?? mockUser;
+
     localStorage.setItem(
       "manus-runtime-user-info",
-      JSON.stringify(meQuery.data)
+      JSON.stringify(user)
     );
     return {
-      user: meQuery.data ?? null,
-      loading: meQuery.isLoading || logoutMutation.isPending,
+      user,
+      loading: isOAuthConfigured ? (meQuery.isLoading || logoutMutation.isPending) : false,
       error: meQuery.error ?? logoutMutation.error ?? null,
-      isAuthenticated: Boolean(meQuery.data),
+      isAuthenticated: Boolean(user),
     };
   }, [
     meQuery.data,
@@ -58,6 +71,7 @@ export function useAuth(options?: UseAuthOptions) {
     meQuery.isLoading,
     logoutMutation.error,
     logoutMutation.isPending,
+    isOAuthConfigured,
   ]);
 
   useEffect(() => {

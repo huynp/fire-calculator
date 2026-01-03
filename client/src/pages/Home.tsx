@@ -28,6 +28,8 @@ import {
 import { Loader2, Save, TrendingUp, Download, Zap, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+type RetirementStrategy = "income_crossover" | "safe_fire";
+
 interface FireInputs {
   currentBalance: number;
   annualReturn: number;
@@ -37,16 +39,20 @@ interface FireInputs {
   retirementAge: number;
   inflationRate: number;
   safeWithdrawalRate: number;
+  retirementStrategy: RetirementStrategy;
 }
 
 interface YearlyData {
   age: number;
   year: number;
   balance: number;
+  annualContribution: number;
   annualExpense: number;
   investmentIncome: number;
+  safeWithdrawalAmount: number;
   fireNumber: number;
-  isFireAchieved: boolean;
+  isFireAchieved: boolean; // Safe FIRE (4% rule)
+  isIncomeCrossover: boolean; // Income > Expenses
 }
 
 interface ChartLineVisibility {
@@ -77,6 +83,7 @@ const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
     retirementAge,
     inflationRate,
     safeWithdrawalRate,
+    retirementStrategy,
   } = inputs;
 
   const projection: YearlyData[] = [];
@@ -84,36 +91,53 @@ const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
   let annualExpense = monthlyExpense * 12;
   const currentYear = new Date().getFullYear();
   const yearsToProject = 50;
-  let fireAchievedYear: number | null = null;
 
   for (let i = 0; i <= yearsToProject; i++) {
     const age = currentAge + i;
     const year = currentYear + i;
-    
+
     const adjustedAnnualExpense = annualExpense * Math.pow(1 + inflationRate / 100, i);
     const fireNumber = adjustedAnnualExpense / (safeWithdrawalRate / 100);
-    const investmentIncome = balance * (safeWithdrawalRate / 100);
-    const isFireAchieved = investmentIncome >= adjustedAnnualExpense;
-    
-    if (isFireAchieved && fireAchievedYear === null) {
-      fireAchievedYear = i;
-    }
+
+    // Investment Income = actual investment return
+    const investmentIncome = balance * (annualReturn / 100);
+
+    // Safe withdrawal amount (4% rule)
+    const safeWithdrawalAmount = balance * (safeWithdrawalRate / 100);
+
+    // Two milestones:
+    // 1. Income Crossover: when investment returns > expenses (aggressive)
+    const isIncomeCrossover = investmentIncome >= adjustedAnnualExpense;
+    // 2. Safe FIRE: when safe withdrawal (4%) > expenses (conservative)
+    const isFireAchieved = safeWithdrawalAmount >= adjustedAnnualExpense;
+
+    // Determine if retirement is triggered based on chosen strategy
+    const isRetired = retirementStrategy === "income_crossover"
+      ? isIncomeCrossover
+      : isFireAchieved;
+
+    const shouldContribute = age < retirementAge && !isRetired;
+    const annualContribution = shouldContribute ? monthlyContribution * 12 : 0;
 
     projection.push({
       age,
       year,
       balance: Math.round(balance),
+      annualContribution,
       annualExpense: Math.round(adjustedAnnualExpense),
       investmentIncome: Math.round(investmentIncome),
+      safeWithdrawalAmount: Math.round(safeWithdrawalAmount),
       fireNumber: Math.round(fireNumber),
       isFireAchieved,
+      isIncomeCrossover,
     });
 
     const growth = balance * (annualReturn / 100);
-    const shouldContribute = age < retirementAge && !isFireAchieved;
-    const annualContribution = shouldContribute ? monthlyContribution * 12 : 0;
-    
-    balance = balance + growth + annualContribution;
+
+    // Subtract expenses once retired (living off portfolio)
+    const withdrawal = isRetired ? adjustedAnnualExpense : 0;
+
+    balance = balance + growth + annualContribution - withdrawal;
   }
 
   return projection;
@@ -128,14 +152,17 @@ const formatCurrency = (value: number) => {
 };
 
 const exportToCSV = (projection: YearlyData[], inputs: FireInputs) => {
-  const headers = ["Year", "Age", "Investment Balance", "Annual Expenses", "Investment Income", "FIRE Number", "FIRE Achieved"];
+  const headers = ["Year", "Age", "Investment Balance", "Annual Contribution", "Annual Expenses", "Investment Income", "Safe Withdrawal", "FIRE Number", "Income Crossover", "Safe FIRE"];
   const rows = projection.map((p) => [
     p.year,
     p.age,
     p.balance,
+    p.annualContribution,
     p.annualExpense,
     p.investmentIncome,
+    p.safeWithdrawalAmount,
     p.fireNumber,
+    p.isIncomeCrossover ? "Yes" : "No",
     p.isFireAchieved ? "Yes" : "No",
   ]);
 
@@ -151,6 +178,7 @@ const exportToCSV = (projection: YearlyData[], inputs: FireInputs) => {
     ["Retirement Age", inputs.retirementAge],
     ["Inflation Rate (%)", inputs.inflationRate],
     ["Safe Withdrawal Rate (%)", inputs.safeWithdrawalRate],
+    ["Retirement Strategy", inputs.retirementStrategy === "safe_fire" ? "Safe FIRE (4% rule)" : "Income Crossover"],
     [""],
     [headers.join(",")],
     ...rows.map((row) => row.join(",")),
@@ -171,21 +199,22 @@ export default function Home() {
   const { user, loading: authLoading, isAuthenticated } = useAuth();
 
   const [inputs, setInputs] = useState<FireInputs>({
-    currentBalance: 50000,
-    annualReturn: 7,
+    currentBalance: 500000,
+    annualReturn: 6,
     monthlyContribution: 1000,
     monthlyExpense: 3000,
-    currentAge: 30,
+    currentAge: 36,
     retirementAge: 65,
     inflationRate: 3,
     safeWithdrawalRate: 4,
+    retirementStrategy: "safe_fire",
   });
 
   const [scenarioName, setScenarioName] = useState("My FIRE Plan");
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>("");
 
   const [chartLineVisibility, setChartLineVisibility] = useState<ChartLineVisibility>({
-    balance: true,
+    balance: false,
     expenses: true,
     income: true,
   });
@@ -221,7 +250,13 @@ export default function Home() {
 
   const projection = useMemo(() => calculateFireProjection(inputs), [inputs]);
 
-  const crossoverPoint = useMemo(() => {
+  // Income Crossover: when investment returns > expenses (aggressive milestone)
+  const incomeCrossoverPoint = useMemo(() => {
+    return projection.find((p) => p.isIncomeCrossover);
+  }, [projection]);
+
+  // Safe FIRE: when 4% withdrawal > expenses (conservative milestone)
+  const safeFIREPoint = useMemo(() => {
     return projection.find((p) => p.isFireAchieved);
   }, [projection]);
 
@@ -541,6 +576,36 @@ export default function Home() {
                   />
                 </div>
 
+                {/* Retirement Strategy Selector */}
+                <div>
+                  <Label htmlFor="retirementStrategy" className="text-white/90 font-medium">
+                    Retirement Trigger
+                  </Label>
+                  <Select
+                    value={inputs.retirementStrategy}
+                    onValueChange={(value: RetirementStrategy) =>
+                      setInputs((prev) => ({ ...prev, retirementStrategy: value }))
+                    }
+                  >
+                    <SelectTrigger className="glass-input mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="safe_fire">
+                        🛡️ Safe FIRE ({inputs.safeWithdrawalRate}% rule)
+                      </SelectItem>
+                      <SelectItem value="income_crossover">
+                        ⚡ Income Crossover ({inputs.annualReturn}% returns)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-white/50 text-xs mt-1">
+                    {inputs.retirementStrategy === "safe_fire"
+                      ? "Conservative: Stop contributions when 4% withdrawal covers expenses"
+                      : "Aggressive: Stop contributions when investment returns exceed expenses"}
+                  </p>
+                </div>
+
                 <Button
                   onClick={handleExportCSV}
                   className="w-full glass-button"
@@ -589,51 +654,80 @@ export default function Home() {
 
           {/* Results Panel */}
           <div className="lg:col-span-2 space-y-8">
-            {/* Crossover Point Card */}
-            {crossoverPoint && (
+            {/* Milestones Card */}
+            {(incomeCrossoverPoint || safeFIREPoint) && (
               <Card className="glass-panel p-8">
                 <h2 className="text-3xl font-heading font-bold text-white mb-6">
-                  🎯 Your FIRE Crossover Point
+                  🎯 Your FIRE Milestones
                 </h2>
-                <div className="grid md:grid-cols-3 gap-6">
-                  <div className="text-center">
-                    <p className="text-white/70 text-sm uppercase tracking-wide mb-2">
-                      Year
-                    </p>
-                    <p className="text-4xl font-bold text-primary">
-                      {crossoverPoint.year}
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-white/70 text-sm uppercase tracking-wide mb-2">
-                      Age
-                    </p>
-                    <p className="text-4xl font-bold text-primary">
-                      {crossoverPoint.age}
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-white/70 text-sm uppercase tracking-wide mb-2">
-                      Portfolio Value
-                    </p>
-                    <p className="text-4xl font-bold text-primary">
-                      {formatCurrency(crossoverPoint.balance)}
-                    </p>
-                  </div>
+
+                {/* Two milestone cards side by side */}
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Income Crossover - Aggressive */}
+                  {incomeCrossoverPoint && (
+                    <div className="p-6 bg-cyan-500/10 rounded-xl border border-cyan-500/30">
+                      <div className="flex items-center gap-2 mb-4">
+                        <span className="text-2xl">⚡</span>
+                        <h3 className="text-lg font-semibold text-cyan-400">Income Crossover</h3>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <p className="text-white/60 text-xs uppercase tracking-wide">Year</p>
+                          <p className="text-2xl font-bold text-cyan-400">{incomeCrossoverPoint.year}</p>
+                        </div>
+                        <div>
+                          <p className="text-white/60 text-xs uppercase tracking-wide">Age</p>
+                          <p className="text-2xl font-bold text-cyan-400">{incomeCrossoverPoint.age}</p>
+                        </div>
+                      </div>
+                      <div className="mb-3">
+                        <p className="text-white/60 text-xs uppercase tracking-wide">Portfolio Value</p>
+                        <p className="text-xl font-bold text-cyan-400">{formatCurrency(incomeCrossoverPoint.balance)}</p>
+                      </div>
+                      <p className="text-white/70 text-sm">
+                        Investment returns ({inputs.annualReturn}%) exceed expenses. You <em>could</em> stop working, but with less safety margin.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Safe FIRE - Conservative */}
+                  {safeFIREPoint && (
+                    <div className="p-6 bg-green-500/10 rounded-xl border border-green-500/30">
+                      <div className="flex items-center gap-2 mb-4">
+                        <span className="text-2xl">🛡️</span>
+                        <h3 className="text-lg font-semibold text-green-400">Safe FIRE</h3>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <p className="text-white/60 text-xs uppercase tracking-wide">Year</p>
+                          <p className="text-2xl font-bold text-green-400">{safeFIREPoint.year}</p>
+                        </div>
+                        <div>
+                          <p className="text-white/60 text-xs uppercase tracking-wide">Age</p>
+                          <p className="text-2xl font-bold text-green-400">{safeFIREPoint.age}</p>
+                        </div>
+                      </div>
+                      <div className="mb-3">
+                        <p className="text-white/60 text-xs uppercase tracking-wide">Portfolio Value</p>
+                        <p className="text-xl font-bold text-green-400">{formatCurrency(safeFIREPoint.balance)}</p>
+                      </div>
+                      <p className="text-white/70 text-sm">
+                        Safe withdrawal ({inputs.safeWithdrawalRate}% rule) covers expenses. Sustainable for 30+ years even in bad markets.
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <div className="mt-6 p-4 bg-white/5 rounded-lg border border-white/10">
-                  <p className="text-white/80 text-center">
-                    In {crossoverPoint.year}, your annual investment income of{" "}
-                    <span className="font-bold text-primary">
-                      {formatCurrency(crossoverPoint.investmentIncome)}
-                    </span>{" "}
-                    will exceed your expenses of{" "}
-                    <span className="font-bold text-pink-400">
-                      {formatCurrency(crossoverPoint.annualExpense)}
-                    </span>
-                    . Monthly contributions stop here. 🎉
-                  </p>
-                </div>
+
+                {/* Summary message */}
+                {incomeCrossoverPoint && safeFIREPoint && incomeCrossoverPoint.year !== safeFIREPoint.year && (
+                  <div className="mt-6 p-4 bg-white/5 rounded-lg border border-white/10">
+                    <p className="text-white/80 text-center">
+                      You can potentially retire in <span className="font-bold text-cyan-400">{incomeCrossoverPoint.year}</span> (age {incomeCrossoverPoint.age}),
+                      or wait until <span className="font-bold text-green-400">{safeFIREPoint.year}</span> (age {safeFIREPoint.age}) for maximum safety.
+                      That's a <span className="font-bold text-primary">{safeFIREPoint.year - incomeCrossoverPoint.year} year</span> window.
+                    </p>
+                  </div>
+                )}
               </Card>
             )}
 
@@ -726,16 +820,31 @@ export default function Home() {
                       wrapperStyle={{ color: "#fff" }}
                       iconType="line"
                     />
-                    {crossoverPoint && (
+                    {/* Income Crossover line (cyan) */}
+                    {incomeCrossoverPoint && (
                       <ReferenceLine
-                        x={crossoverPoint.year}
-                        stroke="#a855f7"
+                        x={incomeCrossoverPoint.year}
+                        stroke="#22d3ee"
                         strokeDasharray="5 5"
                         label={{
-                          value: "FIRE Achieved",
-                          fill: "#a855f7",
-                          fontSize: 12,
+                          value: "Income Crossover",
+                          fill: "#22d3ee",
+                          fontSize: 11,
                           position: "top",
+                        }}
+                      />
+                    )}
+                    {/* Safe FIRE line (green) */}
+                    {safeFIREPoint && safeFIREPoint.year !== incomeCrossoverPoint?.year && (
+                      <ReferenceLine
+                        x={safeFIREPoint.year}
+                        stroke="#22c55e"
+                        strokeDasharray="5 5"
+                        label={{
+                          value: "Safe FIRE",
+                          fill: "#22c55e",
+                          fontSize: 11,
+                          position: "insideTopRight",
                         }}
                       />
                     )}

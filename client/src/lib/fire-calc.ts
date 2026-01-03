@@ -1,3 +1,5 @@
+export type RetirementStrategy = "income_crossover" | "safe_fire";
+
 export interface FireInputs {
   currentBalance: number;
   annualReturn: number; // Percentage (e.g., 7 for 7%)
@@ -7,16 +9,20 @@ export interface FireInputs {
   retirementAge: number;
   inflationRate: number; // Percentage
   safeWithdrawalRate: number; // Percentage (usually 4%)
+  retirementStrategy: RetirementStrategy;
 }
 
 export interface YearlyData {
   age: number;
   year: number;
   balance: number;
+  annualContribution: number;
   annualExpense: number;
   investmentIncome: number;
+  safeWithdrawalAmount: number;
   fireNumber: number;
-  isFireAchieved: boolean;
+  isFireAchieved: boolean; // Safe FIRE (4% rule)
+  isIncomeCrossover: boolean; // Income > Expenses
 }
 
 export const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
@@ -29,6 +35,7 @@ export const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
     retirementAge,
     inflationRate,
     safeWithdrawalRate,
+    retirementStrategy,
   } = inputs;
 
   const projection: YearlyData[] = [];
@@ -49,34 +56,48 @@ export const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
     // FIRE Number = Annual Expenses / Safe Withdrawal Rate
     // This is the amount needed so that 4% withdrawal covers expenses
     const fireNumber = adjustedAnnualExpense / (safeWithdrawalRate / 100);
-    
-    // Investment Income = Current Balance * Safe Withdrawal Rate
-    // This is how much you can safely withdraw annually
-    const investmentIncome = balance * (safeWithdrawalRate / 100);
-    
-    // FIRE is achieved when investment income exceeds expenses
-    // (i.e., when you can live off the investment returns)
-    const isFireAchieved = investmentIncome >= adjustedAnnualExpense;
+
+    // Investment Income = actual investment return
+    const investmentIncome = balance * (annualReturn / 100);
+
+    // Safe withdrawal amount (4% rule)
+    const safeWithdrawalAmount = balance * (safeWithdrawalRate / 100);
+
+    // Two milestones:
+    // 1. Income Crossover: when investment returns > expenses (aggressive)
+    const isIncomeCrossover = investmentIncome >= adjustedAnnualExpense;
+    // 2. Safe FIRE: when safe withdrawal (4%) > expenses (conservative)
+    const isFireAchieved = safeWithdrawalAmount >= adjustedAnnualExpense;
+
+    // Determine if retirement is triggered based on chosen strategy
+    const isRetired = retirementStrategy === "income_crossover"
+      ? isIncomeCrossover
+      : isFireAchieved;
+
+    // Calculate contribution for this year
+    const annualContribution = age < retirementAge && !isRetired ? monthlyContribution * 12 : 0;
 
     projection.push({
       age,
       year,
       balance: Math.round(balance),
+      annualContribution,
       annualExpense: Math.round(adjustedAnnualExpense),
       investmentIncome: Math.round(investmentIncome),
+      safeWithdrawalAmount: Math.round(safeWithdrawalAmount),
       fireNumber: Math.round(fireNumber),
       isFireAchieved,
+      isIncomeCrossover,
     });
 
     // Calculate next year's balance
     // 1. Add investment growth
     const growth = balance * (annualReturn / 100);
-    
-    // 2. Add contributions (only if not retired yet)
-    // We assume contributions stop at retirement age
-    const annualContribution = age < retirementAge ? monthlyContribution * 12 : 0;
-    
-    balance = balance + growth + annualContribution;
+
+    // 2. Subtract withdrawals if retired (living off portfolio)
+    const withdrawal = isRetired ? adjustedAnnualExpense : 0;
+
+    balance = balance + growth + annualContribution - withdrawal;
   }
 
   return projection;
