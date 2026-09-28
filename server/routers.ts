@@ -42,6 +42,7 @@ export const appRouter = router({
           retirementAge: z.number().int().min(0).max(120),
           inflationRate: z.string(),
           safeWithdrawalRate: z.string(),
+          retirementStrategy: z.enum(["safe_fire", "income_crossover"]).optional(),
         })
       )
       .mutation(async ({ ctx, input }) => {
@@ -64,6 +65,7 @@ export const appRouter = router({
           retirementAge: z.number().int().min(0).max(120).optional(),
           inflationRate: z.string().optional(),
           safeWithdrawalRate: z.string().optional(),
+          retirementStrategy: z.enum(["safe_fire", "income_crossover"]).optional(),
         })
       )
       .mutation(async ({ ctx, input }) => {

@@ -266,9 +266,7 @@ export default function Home() {
   // Load scenario when selected
   useEffect(() => {
     if (selectedScenario) {
-      // Saved scenarios have no retirement-trigger column, so keep the current choice.
-      setInputs((prev) => ({
-        ...prev,
+      setInputs({
         currentBalance: parseFloat(selectedScenario.currentBalance),
         annualReturn: parseFloat(selectedScenario.annualReturn),
         monthlyContribution: parseFloat(selectedScenario.monthlyContribution),
@@ -277,7 +275,8 @@ export default function Home() {
         retirementAge: selectedScenario.retirementAge,
         inflationRate: parseFloat(selectedScenario.inflationRate),
         safeWithdrawalRate: parseFloat(selectedScenario.safeWithdrawalRate),
-      }));
+        retirementStrategy: selectedScenario.retirementStrategy,
+      });
       setScenarioName(selectedScenario.name);
       toast.success(`Loaded scenario: ${selectedScenario.name}`);
     }
@@ -341,6 +340,7 @@ export default function Home() {
       retirementAge: inputs.retirementAge,
       inflationRate: inputs.inflationRate.toString(),
       safeWithdrawalRate: inputs.safeWithdrawalRate.toString(),
+      retirementStrategy: inputs.retirementStrategy,
     });
   };
 

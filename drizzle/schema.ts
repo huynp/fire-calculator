@@ -42,6 +42,7 @@ export const fireScenarios = mysqlTable("fire_scenarios", {
   retirementAge: int("retirementAge").notNull(),
   inflationRate: decimal("inflationRate", { precision: 5, scale: 2 }).notNull(), // e.g., 3.00 for 3%
   safeWithdrawalRate: decimal("safeWithdrawalRate", { precision: 5, scale: 2 }).notNull(), // e.g., 4.00 for 4%
+  retirementStrategy: mysqlEnum("retirementStrategy", ["safe_fire", "income_crossover"]).default("safe_fire").notNull(),
   
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

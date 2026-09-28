@@ -1,89 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-type RetirementStrategy = "income_crossover" | "safe_fire";
-
-interface FireInputs {
-  currentBalance: number;
-  annualReturn: number;
-  monthlyContribution: number;
-  monthlyExpense: number;
-  currentAge: number;
-  retirementAge: number;
-  inflationRate: number;
-  safeWithdrawalRate: number;
-  retirementStrategy: RetirementStrategy;
-}
-
-interface YearlyData {
-  age: number;
-  year: number;
-  balance: number;
-  annualContribution: number;
-  annualExpense: number;
-  investmentIncome: number;
-  safeWithdrawalAmount: number;
-  fireNumber: number;
-  isFireAchieved: boolean;
-  isIncomeCrossover: boolean;
-}
-
-const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
-  const {
-    currentBalance,
-    annualReturn,
-    monthlyContribution,
-    monthlyExpense,
-    currentAge,
-    retirementAge,
-    inflationRate,
-    safeWithdrawalRate,
-    retirementStrategy,
-  } = inputs;
-
-  const projection: YearlyData[] = [];
-  let balance = currentBalance;
-  let annualExpense = monthlyExpense * 12;
-  const currentYear = new Date().getFullYear();
-  const yearsToProject = 50;
-
-  for (let i = 0; i <= yearsToProject; i++) {
-    const age = currentAge + i;
-    const year = currentYear + i;
-    
-    const adjustedAnnualExpense = annualExpense * Math.pow(1 + inflationRate / 100, i);
-    const fireNumber = adjustedAnnualExpense / (safeWithdrawalRate / 100);
-    const investmentIncome = balance * (annualReturn / 100);
-    const safeWithdrawalAmount = balance * (safeWithdrawalRate / 100);
-    const isIncomeCrossover = investmentIncome >= adjustedAnnualExpense;
-    const isFireAchieved = safeWithdrawalAmount >= adjustedAnnualExpense;
-
-    const isRetired = retirementStrategy === "income_crossover"
-      ? isIncomeCrossover
-      : isFireAchieved;
-    const shouldContribute = age < retirementAge && !isRetired;
-    const annualContribution = shouldContribute ? monthlyContribution * 12 : 0;
-
-    projection.push({
-      age,
-      year,
-      balance: Math.round(balance),
-      annualContribution,
-      annualExpense: Math.round(adjustedAnnualExpense),
-      investmentIncome: Math.round(investmentIncome),
-      safeWithdrawalAmount: Math.round(safeWithdrawalAmount),
-      fireNumber: Math.round(fireNumber),
-      isFireAchieved,
-      isIncomeCrossover,
-    });
-
-    const growth = balance * (annualReturn / 100);
-    const withdrawal = isRetired ? adjustedAnnualExpense : 0;
-
-    balance = balance + growth + annualContribution - withdrawal;
-  }
-
-  return projection;
-};
+import { calculateFireProjection, type FireInputs } from "./fire-calc";
 
 describe("FIRE Calculator - Calculation Verification", () => {
   
@@ -390,5 +307,27 @@ describe("FIRE Calculator - Calculation Verification", () => {
         expect(afterFireYear.balance).toBeCloseTo(expectedBalance, -1);
       }
     });
+  });
+});
+
+describe("Retirement is permanent", () => {
+  it("never resumes contributions once retired, even if the balance dips below the FIRE number", () => {
+    // 5% return - 3% inflation: after retiring at exactly-enough, the 4% withdrawal
+    // falls behind expenses and the balance drops under the FIRE number.
+    const projection = calculateFireProjection({
+      currentBalance: 1000000,
+      annualReturn: 5,
+      monthlyContribution: 1000,
+      monthlyExpense: 3000,
+      currentAge: 30,
+      retirementAge: 65,
+      inflationRate: 3,
+      safeWithdrawalRate: 4,
+      retirementStrategy: "safe_fire",
+    });
+
+    expect(projection[0].isFireAchieved).toBe(true);
+    expect(projection.some((y) => !y.isFireAchieved)).toBe(true); // it does dip below later
+    projection.forEach((y) => expect(y.annualContribution).toBe(0));
   });
 });

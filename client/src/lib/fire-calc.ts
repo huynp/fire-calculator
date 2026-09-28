@@ -44,6 +44,8 @@ export const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
   const currentYear = new Date().getFullYear();
   
   const yearsToProject = 50;
+  // Once the trigger is hit you stop working for good, even if a later year dips below it.
+  let isRetired = false;
 
   for (let i = 0; i <= yearsToProject; i++) {
     const age = currentAge + i;
@@ -70,7 +72,7 @@ export const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
     const isFireAchieved = safeWithdrawalAmount >= adjustedAnnualExpense;
 
     // Determine if retirement is triggered based on chosen strategy
-    const isRetired = retirementStrategy === "income_crossover"
+    isRetired ||= retirementStrategy === "income_crossover"
       ? isIncomeCrossover
       : isFireAchieved;
 

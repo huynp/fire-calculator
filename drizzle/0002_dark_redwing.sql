@@ -1,0 +1,1 @@
+ALTER TABLE `fire_scenarios` ADD `retirementStrategy` enum('safe_fire','income_crossover') DEFAULT 'safe_fire' NOT NULL;
