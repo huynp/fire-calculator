@@ -2,6 +2,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { HelpDialog } from "@/components/HelpDialog";
+import { NumberField } from "@/components/NumberField";
+import { AssetRows, IncomeRows } from "@/components/AssetsIncome";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -100,6 +102,8 @@ const exportToCSV = (
       p.fireNumber,
       p.isIncomeCrossover ? c.yes : c.no,
       p.isFireAchieved ? c.yes : c.no,
+      p.otherIncome,
+      p.netWorth,
     ]),
   ];
   // The byte-order mark lets Excel read Vietnamese text as UTF-8.
@@ -114,57 +118,10 @@ const exportToCSV = (
   window.URL.revokeObjectURL(url);
 };
 
-const axisTick = { fontSize: 12, fill: "var(--muted-foreground)" };
+// Third categorical slot after blue and orange (validated; the legend labels it, since it is light on white).
+const OTHER_INCOME_COLOR = "#1baf7a";
 
-function NumberField({
-  id,
-  label,
-  value,
-  onChange,
-  money,
-  suffix,
-  step,
-}: {
-  id: string;
-  label: string;
-  value: number;
-  onChange: (value: string) => void;
-  /** Whole-number money amount: shows the currency symbol and the locale's thousands separators */
-  money?: { symbol: string; locale: string };
-  suffix?: string;
-  step?: string;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-sm font-normal text-muted-foreground">
-        {label}
-      </Label>
-      <div className="relative">
-        {money && (
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-            {money.symbol}
-          </span>
-        )}
-        <Input
-          id={id}
-          type={money ? "text" : "number"}
-          inputMode={money ? "numeric" : "decimal"}
-          step={step}
-          value={money ? value.toLocaleString(money.locale) : value}
-          // Money is whole units, so keep digits only: "." and "," are thousands separators in some locales.
-          onChange={(e) => onChange(money ? e.target.value.replace(/\D/g, "") : e.target.value)}
-          className={cn("h-10 bg-card tabular-nums shadow-none", suffix && "pr-9")}
-          style={money ? { paddingLeft: `${1.1 + money.symbol.length * 0.55}rem` } : undefined}
-        />
-        {suffix && (
-          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-            {suffix}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
+const axisTick = { fontSize: 12, fill: "var(--muted-foreground)" };
 
 function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
@@ -234,6 +191,8 @@ export default function Home() {
   const [futureDollars, setFutureDollars] = useState(initialPlan.futureDollars);
   const [lang, setLang] = useState<Lang>(initialPlan.lang);
   const [currency, setCurrency] = useState<Currency>(initialPlan.currency);
+  const [assets, setAssets] = useState(initialPlan.assets);
+  const [otherIncome, setOtherIncome] = useState(initialPlan.otherIncome);
   const t = MESSAGES[lang];
   const locale = LOCALES[lang];
 
@@ -292,11 +251,11 @@ export default function Home() {
       futureDollars,
       lang,
       currency,
-      assets: initialPlan.assets,
-      otherIncome: initialPlan.otherIncome,
+      assets,
+      otherIncome,
     });
     window.history.replaceState(null, "", window.location.pathname + search);
-  }, [inputs, budget, futureDollars, lang, currency]);
+  }, [inputs, budget, futureDollars, lang, currency, assets, otherIncome]);
 
   // Sync monthly contribution and expense from budget
   useEffect(() => {
@@ -359,7 +318,10 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedScenario]);
 
-  const projection = useMemo(() => calculateFireProjection(inputs), [inputs]);
+  const projection = useMemo(
+    () => calculateFireProjection({ ...inputs, assets, otherIncome }),
+    [inputs, assets, otherIncome]
+  );
 
   // Income Crossover: when investment returns > expenses (aggressive milestone)
   const incomeCrossoverPoint = useMemo(() => {
@@ -381,6 +343,7 @@ export default function Home() {
     expenses: Math.round(toDisplay(p.annualExpense, i)),
     returns: Math.round(toDisplay(p.investmentIncome, i)),
     fireNumber: Math.round(toDisplay(p.fireNumber, i)),
+    otherIncome: Math.round(toDisplay(p.otherIncome, i)),
   }));
 
   const createScenarioMutation = trpc.fireScenarios.create.useMutation({
@@ -488,6 +451,13 @@ export default function Home() {
       axisLine={{ stroke: "var(--border)" }}
     />
   );
+  // Size the axis to its longest label: compact money differs a lot by language and currency ("380 N US$").
+  const chartMax = Math.max(
+    ...chartData.map((d) =>
+      chartView === "portfolio" ? Math.max(d.balance, d.fireNumber) : Math.max(d.returns, d.expenses, d.otherIncome)
+    )
+  );
+  const yAxisWidth = Math.max(48, compactMoney.format(chartMax).length * 7 + 12);
   const yAxis = (
     <YAxis
       tickFormatter={(v) => compactMoney.format(v)}
@@ -495,7 +465,7 @@ export default function Home() {
       tickLine={false}
       tickMargin={8}
       axisLine={false}
-      width={isMobile ? 62 : 72}
+      width={yAxisWidth}
     />
   );
   const tooltip = (
@@ -568,10 +538,14 @@ export default function Home() {
                   onChange={(v) => updateInput("retirementAge", v)}
                 />
               </div>
+            </section>
+
+            <section className="space-y-3 border-t p-4 sm:p-5">
+              <h2 className={sectionTitle}>{t.whatYouHave}</h2>
               <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-3">
                 <NumberField
                   id="currentBalance"
-                  label={t.currentInvestments}
+                  label={t.assetKinds.investments}
                   money={moneyField}
                   value={inputs.currentBalance}
                   onChange={(v) => updateInput("currentBalance", v)}
@@ -594,6 +568,7 @@ export default function Home() {
                   </Select>
                 </div>
               </div>
+              <AssetRows t={t} money={moneyField} assets={assets} onChange={setAssets} />
             </section>
 
             <section className="space-y-4 border-t p-4 sm:p-5">
@@ -601,7 +576,7 @@ export default function Home() {
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   id="monthlyIncome"
-                  label={t.income}
+                  label={t.takeHomePay}
                   money={moneyField}
                   value={budget.monthlyIncome}
                   onChange={(v) => setBudget((prev) => ({ ...prev, monthlyIncome: parseFloat(v) || 0 }))}
@@ -618,6 +593,17 @@ export default function Home() {
                 <span className="text-sm text-muted-foreground">{t.investedMonthly}</span>
                 <span className="font-semibold tabular-nums">{formatMoney(monthlyInvested)}</span>
               </div>
+            </section>
+
+            <section className="space-y-3 border-t p-4 sm:p-5">
+              <h2 className={sectionTitle}>{t.otherIncomeTitle}</h2>
+              <IncomeRows
+                t={t}
+                money={moneyField}
+                incomes={otherIncome}
+                currentAge={inputs.currentAge}
+                onChange={setOtherIncome}
+              />
             </section>
 
             <section className="space-y-4 border-t p-4 sm:p-5">
@@ -779,6 +765,11 @@ export default function Home() {
                   <p className="mt-2 text-sm text-muted-foreground">
                     {yearsToFire === 0 ? t.alreadyThere(fiReason) : t.inYears(yearsToFire ?? 0, fiReason)}
                   </p>
+                  {assets.some((a) => a.kind === "property") && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t.netWorthLine(formatMoney(projection[0].netWorth))}
+                    </p>
+                  )}
                 </>
               ) : (
                 <>
@@ -793,7 +784,7 @@ export default function Home() {
                   value={formatMoney(projection[0].fireNumber)}
                   detail={
                     inputs.safeWithdrawalRate > 0
-                      ? t.timesExpenses(+(100 / inputs.safeWithdrawalRate).toFixed(1))
+                      ? (projection[0].otherIncome > 0 ? t.timesNeed : t.timesExpenses)(+(100 / inputs.safeWithdrawalRate).toFixed(1))
                       : undefined
                   }
                 />
@@ -848,6 +839,7 @@ export default function Home() {
                   <>
                     <LegendItem color="var(--chart-2)" label={t.investmentReturns} />
                     <LegendItem color="var(--chart-3)" label={t.expenses} />
+                    {otherIncome.length > 0 && <LegendItem color={OTHER_INCOME_COLOR} label={t.otherIncomeSeries} />}
                   </>
                 )}
                 <label className="ml-auto flex cursor-pointer items-center gap-2">
@@ -921,6 +913,17 @@ export default function Home() {
                         dot={false}
                         activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
                       />
+                      {otherIncome.length > 0 && (
+                        <Line
+                          type="monotone"
+                          dataKey="otherIncome"
+                          name={t.otherIncomeSeries}
+                          stroke={OTHER_INCOME_COLOR}
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
+                        />
+                      )}
                       <Line
                         type="monotone"
                         dataKey="expenses"
