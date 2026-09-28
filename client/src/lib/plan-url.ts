@@ -93,7 +93,7 @@ function parseAsset(raw: string): ExtraAsset | undefined {
   return found === "savings" ? { kind: found, amount, rate: inRange(rateRaw, -5, 30) ?? 4 } : { kind: found, amount };
 }
 
-// "kind:monthly:fromAge", e.g. "rent:1200:36".
+// "kind:monthly:fromAge", e.g. "rent:1200:36". Named "other" because "income" is take-home pay.
 function parseIncome(raw: string): OtherIncome | undefined {
   const [kind, monthlyRaw, fromAgeRaw] = raw.split(":");
   const found = INCOME_KINDS.find((k) => k === kind);
@@ -123,9 +123,9 @@ export function planFromSearch(search: string, base: Plan = DEFAULT_PLAN): Plan 
   const dollars = params.get("dollars");
   if (dollars === "future" || dollars === "today") plan.futureDollars = dollars === "future";
   const assets = params.getAll("asset").map(parseAsset).filter((a): a is ExtraAsset => !!a);
-  const incomes = params.getAll("income").map(parseIncome).filter((o): o is OtherIncome => !!o);
+  const incomes = params.getAll("other").map(parseIncome).filter((o): o is OtherIncome => !!o);
   plan.assets = assets.length || params.has("asset") ? assets.slice(0, MAX_ROWS) : base.assets;
-  plan.otherIncome = incomes.length || params.has("income") ? incomes.slice(0, MAX_ROWS) : base.otherIncome;
+  plan.otherIncome = incomes.length || params.has("other") ? incomes.slice(0, MAX_ROWS) : base.otherIncome;
   return plan;
 }
 
@@ -144,7 +144,7 @@ export function planToSearch(plan: Plan): string {
   plan.assets.forEach((a) =>
     params.append("asset", [a.kind, a.amount, ...(a.kind === "savings" ? [a.rate ?? 4] : [])].join(":"))
   );
-  plan.otherIncome.forEach((o) => params.append("income", [o.kind, o.monthly, o.fromAge].join(":")));
+  plan.otherIncome.forEach((o) => params.append("other", [o.kind, o.monthly, o.fromAge].join(":")));
   const query = params.toString();
   return query ? `?${query}` : "";
 }
