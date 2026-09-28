@@ -30,6 +30,11 @@ import { toast } from "sonner";
 
 type RetirementStrategy = "income_crossover" | "safe_fire";
 
+interface BudgetInputs {
+  monthlyIncome: number;
+  monthlyExpense: number;
+}
+
 interface FireInputs {
   currentBalance: number;
   annualReturn: number;
@@ -151,7 +156,7 @@ const formatCurrency = (value: number) => {
   }).format(value);
 };
 
-const exportToCSV = (projection: YearlyData[], inputs: FireInputs) => {
+const exportToCSV = (projection: YearlyData[], inputs: FireInputs, budget: BudgetInputs) => {
   const headers = ["Year", "Age", "Investment Balance", "Annual Contribution", "Annual Expenses", "Investment Income", "Safe Withdrawal", "FIRE Number", "Income Crossover", "Safe FIRE"];
   const rows = projection.map((p) => [
     p.year,
@@ -169,11 +174,14 @@ const exportToCSV = (projection: YearlyData[], inputs: FireInputs) => {
   const csvContent = [
     ["FIRE Calculator Export"],
     [""],
-    ["Inputs:"],
+    ["Budget:"],
+    ["Monthly Income", budget.monthlyIncome],
+    ["Monthly Expenses", budget.monthlyExpense],
+    ["Monthly Contribution (calculated)", inputs.monthlyContribution],
+    [""],
+    ["Configuration:"],
     ["Current Balance", inputs.currentBalance],
     ["Annual Return (%)", inputs.annualReturn],
-    ["Monthly Contribution", inputs.monthlyContribution],
-    ["Monthly Expenses", inputs.monthlyExpense],
     ["Current Age", inputs.currentAge],
     ["Retirement Age", inputs.retirementAge],
     ["Inflation Rate (%)", inputs.inflationRate],
@@ -198,6 +206,15 @@ const exportToCSV = (projection: YearlyData[], inputs: FireInputs) => {
 export default function Home() {
   const { user, loading: authLoading, isAuthenticated } = useAuth();
 
+  // Budget inputs (for calculating monthly contribution)
+  const [budget, setBudget] = useState<BudgetInputs>({
+    monthlyIncome: 4000,
+    monthlyExpense: 3000,
+  });
+
+  // Auto-calculate monthly contribution from budget
+  const calculatedContribution = Math.max(0, budget.monthlyIncome - budget.monthlyExpense);
+
   const [inputs, setInputs] = useState<FireInputs>({
     currentBalance: 500000,
     annualReturn: 6,
@@ -209,6 +226,15 @@ export default function Home() {
     safeWithdrawalRate: 4,
     retirementStrategy: "safe_fire",
   });
+
+  // Sync monthly contribution and expense from budget
+  useEffect(() => {
+    setInputs((prev) => ({
+      ...prev,
+      monthlyContribution: calculatedContribution,
+      monthlyExpense: budget.monthlyExpense,
+    }));
+  }, [calculatedContribution, budget.monthlyExpense]);
 
   const [scenarioName, setScenarioName] = useState("My FIRE Plan");
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>("");
@@ -338,7 +364,7 @@ export default function Home() {
   };
 
   const handleExportCSV = () => {
-    exportToCSV(projection, inputs);
+    exportToCSV(projection, inputs, budget);
     toast.success("Projection exported to CSV");
   };
 
@@ -391,14 +417,77 @@ export default function Home() {
         {/* Main Content Grid */}
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Input Panel */}
-          <div className="lg:col-span-1">
-            <Card className="glass-panel p-6 space-y-6">
-              <div>
-                <h2 className="text-2xl font-heading font-semibold text-white mb-4 flex items-center gap-2">
-                  <TrendingUp className="w-6 h-6 text-primary" />
-                  Your Inputs
-                </h2>
+          <div className="lg:col-span-1 space-y-6">
+            {/* Budget Card */}
+            <Card className="glass-panel p-6">
+              <h2 className="text-xl font-heading font-semibold text-white mb-4 flex items-center gap-2">
+                💰 Monthly Budget
+              </h2>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="monthlyIncome" className="text-white/90">
+                    Monthly Income ($)
+                  </Label>
+                  <Input
+                    id="monthlyIncome"
+                    type="number"
+                    value={budget.monthlyIncome}
+                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyIncome: parseFloat(e.target.value) || 0 }))}
+                    className="glass-input mt-1"
+                  />
+                  <input
+                    type="range"
+                    min="0"
+                    max="30000"
+                    step="100"
+                    value={budget.monthlyIncome}
+                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyIncome: parseFloat(e.target.value) }))}
+                    className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary mt-2"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="budgetExpense" className="text-white/90">
+                    Monthly Expenses ($)
+                  </Label>
+                  <Input
+                    id="budgetExpense"
+                    type="number"
+                    value={budget.monthlyExpense}
+                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyExpense: parseFloat(e.target.value) || 0 }))}
+                    className="glass-input mt-1"
+                  />
+                  <input
+                    type="range"
+                    min="0"
+                    max="20000"
+                    step="100"
+                    value={budget.monthlyExpense}
+                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyExpense: parseFloat(e.target.value) }))}
+                    className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500 mt-2"
+                  />
+                </div>
+
+                <div className="p-3 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex justify-between items-center">
+                    <span className="text-white/70 text-sm">Monthly Contribution</span>
+                    <span className="text-lg font-bold text-primary">
+                      {formatCurrency(calculatedContribution)}
+                    </span>
+                  </div>
+                  <p className="text-white/50 text-xs mt-1">
+                    Income - Expenses = Savings
+                  </p>
+                </div>
               </div>
+            </Card>
+
+            {/* Configuration Card */}
+            <Card className="glass-panel p-6">
+              <h2 className="text-xl font-heading font-semibold text-white mb-4 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-primary" />
+                Configuration
+              </h2>
 
               <div className="space-y-4">
                 {isAuthenticated && savedScenarios.length > 0 && (
@@ -472,108 +561,62 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div>
-                  <Label htmlFor="monthlyContribution" className="text-white/90">
-                    Monthly Contribution ($)
-                  </Label>
-                  <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="currentAge" className="text-white/90">
+                      Current Age
+                    </Label>
                     <Input
-                      id="monthlyContribution"
+                      id="currentAge"
                       type="number"
-                      value={inputs.monthlyContribution}
-                      onChange={(e) => updateInput("monthlyContribution", e.target.value)}
+                      value={inputs.currentAge}
+                      onChange={(e) => updateInput("currentAge", e.target.value)}
                       className="glass-input mt-1"
                     />
-                    <input
-                      type="range"
-                      min="0"
-                      max="5000"
-                      step="100"
-                      value={inputs.monthlyContribution}
-                      onChange={(e) => updateInput("monthlyContribution", e.target.value)}
-                      className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary"
+                  </div>
+
+                  <div>
+                    <Label htmlFor="retirementAge" className="text-white/90">
+                      Retirement Age
+                    </Label>
+                    <Input
+                      id="retirementAge"
+                      type="number"
+                      value={inputs.retirementAge}
+                      onChange={(e) => updateInput("retirementAge", e.target.value)}
+                      className="glass-input mt-1"
                     />
-                    <p className="text-xs text-white/60">Drag to adjust: {formatCurrency(inputs.monthlyContribution)}</p>
                   </div>
                 </div>
 
-                <div>
-                  <Label htmlFor="monthlyExpense" className="text-white/90">
-                    Monthly Expenses ($)
-                  </Label>
-                  <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="inflationRate" className="text-white/90">
+                      Inflation (%)
+                    </Label>
                     <Input
-                      id="monthlyExpense"
+                      id="inflationRate"
                       type="number"
-                      value={inputs.monthlyExpense}
-                      onChange={(e) => updateInput("monthlyExpense", e.target.value)}
+                      step="0.1"
+                      value={inputs.inflationRate}
+                      onChange={(e) => updateInput("inflationRate", e.target.value)}
                       className="glass-input mt-1"
                     />
-                    <input
-                      type="range"
-                      min="0"
-                      max="10000"
-                      step="100"
-                      value={inputs.monthlyExpense}
-                      onChange={(e) => updateInput("monthlyExpense", e.target.value)}
-                      className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary"
-                    />
-                    <p className="text-xs text-white/60">Drag to adjust: {formatCurrency(inputs.monthlyExpense)}</p>
                   </div>
-                </div>
 
-                <div>
-                  <Label htmlFor="currentAge" className="text-white/90">
-                    Current Age
-                  </Label>
-                  <Input
-                    id="currentAge"
-                    type="number"
-                    value={inputs.currentAge}
-                    onChange={(e) => updateInput("currentAge", e.target.value)}
-                    className="glass-input mt-1"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="retirementAge" className="text-white/90">
-                    Retirement Age
-                  </Label>
-                  <Input
-                    id="retirementAge"
-                    type="number"
-                    value={inputs.retirementAge}
-                    onChange={(e) => updateInput("retirementAge", e.target.value)}
-                    className="glass-input mt-1"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="inflationRate" className="text-white/90">
-                    Inflation Rate (%)
-                  </Label>
-                  <Input
-                    id="inflationRate"
-                    type="number"
-                    step="0.1"
-                    value={inputs.inflationRate}
-                    onChange={(e) => updateInput("inflationRate", e.target.value)}
-                    className="glass-input mt-1"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="safeWithdrawalRate" className="text-white/90">
-                    Safe Withdrawal Rate (%)
-                  </Label>
-                  <Input
-                    id="safeWithdrawalRate"
-                    type="number"
-                    step="0.1"
-                    value={inputs.safeWithdrawalRate}
-                    onChange={(e) => updateInput("safeWithdrawalRate", e.target.value)}
-                    className="glass-input mt-1"
-                  />
+                  <div>
+                    <Label htmlFor="safeWithdrawalRate" className="text-white/90">
+                      SWR (%)
+                    </Label>
+                    <Input
+                      id="safeWithdrawalRate"
+                      type="number"
+                      step="0.1"
+                      value={inputs.safeWithdrawalRate}
+                      onChange={(e) => updateInput("safeWithdrawalRate", e.target.value)}
+                      className="glass-input mt-1"
+                    />
+                  </div>
                 </div>
 
                 {/* Retirement Strategy Selector */}
@@ -793,14 +836,19 @@ export default function Home() {
               <p className="text-white/70 text-sm mb-4">
                 Monthly contributions stop once FIRE is achieved. The chart shows your portfolio growth after contributions cease.
               </p>
-              <div className="h-[500px]">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-[500px] w-full overflow-x-auto">
+                <ResponsiveContainer width={1200} height="100%">
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                     <XAxis
                       dataKey="year"
                       stroke="rgba(255,255,255,0.7)"
                       style={{ fontSize: "12px" }}
+                      interval={0}
+                      tick={{ fontSize: 10 }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
                     />
                     <YAxis
                       stroke="rgba(255,255,255,0.7)"
