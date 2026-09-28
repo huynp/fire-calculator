@@ -247,7 +247,7 @@ describe("FIRE Calculator - Calculation Verification", () => {
 
     it("should correctly calculate investment income vs expenses", () => {
       const inputs: FireInputs = {
-        currentBalance: 900000,
+        currentBalance: 1000000, // not exactly 25x expenses: at 900k, 7% return - 3% inflation keeps the 4% withdrawal exactly equal to expenses and rounding decides the result
         annualReturn: 7,
         monthlyContribution: 1000,
         monthlyExpense: 3000,
@@ -262,8 +262,8 @@ describe("FIRE Calculator - Calculation Verification", () => {
 
       projection.forEach((year) => {
         // Investment income should be annualReturn%, not safe withdrawal rate
-        const expectedIncome = Math.round(year.balance * 0.07);
-        expect(year.investmentIncome).toBe(expectedIncome);
+        // year.balance is rounded, so allow rounding slack
+        expect(year.investmentIncome).toBeCloseTo(year.balance * 0.07, -1);
 
         // FIRE is achieved when safe withdrawal (4%) >= expenses
         const safeWithdrawal = year.balance * 0.04;
@@ -385,8 +385,8 @@ describe("FIRE Calculator - Calculation Verification", () => {
         const afterFireYear = projection[fireIndex + 1];
         // After FIRE: balance grows by 7% but expenses are withdrawn
         const fireYearExpense = projection[fireIndex].annualExpense;
-        const inflatedExpense = fireYearExpense * 1.03; // Next year's expense
-        const expectedBalance = fireYear!.balance * 1.07 - inflatedExpense;
+        // The FIRE year's own expense is withdrawn at the end of that year
+        const expectedBalance = fireYear!.balance * 1.07 - fireYearExpense;
         expect(afterFireYear.balance).toBeCloseTo(expectedBalance, -1);
       }
     });
