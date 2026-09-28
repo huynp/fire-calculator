@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { HelpDialog } from "@/components/HelpDialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -423,11 +424,14 @@ export default function Home() {
             </span>
             <span className="font-semibold tracking-tight">FIRE Calculator</span>
           </div>
-          {!isAuthenticated && import.meta.env.VITE_OAUTH_PORTAL_URL && (
-            <Button asChild variant="ghost" size="sm">
-              <a href={getLoginUrl()}>Log in</a>
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {!isAuthenticated && import.meta.env.VITE_OAUTH_PORTAL_URL && (
+              <Button asChild variant="ghost" size="sm">
+                <a href={getLoginUrl()}>Log in</a>
+              </Button>
+            )}
+            <HelpDialog />
+          </div>
         </div>
       </header>
 
