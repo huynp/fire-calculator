@@ -58,7 +58,7 @@ Retirement stays permanent, as today.
 
 ## Link, languages, help
 
-- **Link:** repeated params `asset=kind:amount[:rate]` and `income=kind:monthly:fromAge`, for example `asset=savings:20000:4&income=rent:1200:36`. `invested` stays the first Investments row, so existing links still work. Unknown kinds, bad numbers and rows beyond 10 are dropped on read.
+- **Link:** repeated params `asset=kind:amount[:rate]` and `other=kind:monthly:fromAge` (not `income`, which is take-home pay), for example `asset=savings:20000:4&other=rent:1200:36`. `invested` stays the first Investments row, so existing links still work. Unknown kinds, bad numbers and rows beyond 10 are dropped on read.
 - **Languages:** every new label is in English and Vietnamese (lib/i18n.ts, type-checked).
 - **Help dialog:** a short paragraph on "What you have" vs "Other income", and why interest isn't income.
 
