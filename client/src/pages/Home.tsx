@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { HelpDialog } from "@/components/HelpDialog";
 import { Switch } from "@/components/ui/switch";
-import { planFromSearch, planToSearch } from "@/lib/plan-url";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,11 +19,20 @@ import { getLoginUrl } from "@/const";
 import { cn } from "@/lib/utils";
 import {
   calculateFireProjection,
-  formatCurrency,
   type FireInputs,
   type RetirementStrategy,
   type YearlyData,
 } from "@/lib/fire-calc";
+import { LOCALES, MESSAGES, type Lang, type Messages } from "@/lib/i18n";
+import {
+  CURRENCIES,
+  DEFAULT_PLAN,
+  amountsFor,
+  defaultsFor,
+  planFromSearch,
+  planToSearch,
+  type Currency,
+} from "@/lib/plan-url";
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useEffect } from "react";
 import {
@@ -47,56 +55,57 @@ interface BudgetInputs {
   monthlyExpense: number;
 }
 
-interface ScenarioPreset {
-  name: string;
-  annualReturn: number;
-}
+// Rounded long-run US nominal averages (Vanguard asset-allocation models, 1926 onward).
+const RETURN_PRESETS = [
+  { id: "bonds", annualReturn: 6 },
+  { id: "balanced", annualReturn: 9 },
+  { id: "stocks", annualReturn: 10 },
+] as const;
 
-const SCENARIO_PRESETS: ScenarioPreset[] = [
-  { name: "Conservative", annualReturn: 5 },
-  { name: "Moderate", annualReturn: 7 },
-  { name: "Aggressive", annualReturn: 10 },
-];
+const exportToCSV = (
+  projection: YearlyData[],
+  inputs: FireInputs,
+  budget: BudgetInputs,
+  currency: Currency,
+  t: Messages
+) => {
+  const c = t.csv;
+  const rows: (string | number)[][] = [
+    [c.title],
+    [],
+    [c.budget],
+    [c.monthlyIncome, budget.monthlyIncome],
+    [c.monthlyExpenses, budget.monthlyExpense],
+    [c.monthlyInvested, inputs.monthlyContribution],
+    [],
+    [c.assumptions],
+    [c.currency, currency],
+    [c.currentInvestments, inputs.currentBalance],
+    [c.annualReturn, inputs.annualReturn],
+    [c.currentAge, inputs.currentAge],
+    [c.retirementAge, inputs.retirementAge],
+    [c.inflation, inputs.inflationRate],
+    [c.withdrawalRate, inputs.safeWithdrawalRate],
+    [c.stopInvesting, inputs.retirementStrategy === "safe_fire" ? c.stopSafe : c.stopCrossover],
+    [],
+    c.columns,
+    ...projection.map((p) => [
+      p.year,
+      p.age,
+      p.balance,
+      p.annualContribution,
+      p.annualExpense,
+      p.investmentIncome,
+      p.safeWithdrawalAmount,
+      p.fireNumber,
+      p.isIncomeCrossover ? c.yes : c.no,
+      p.isFireAchieved ? c.yes : c.no,
+    ]),
+  ];
+  // The byte-order mark lets Excel read Vietnamese text as UTF-8.
+  const csvContent = "﻿" + rows.map((row) => row.join(",")).join("\n");
 
-const exportToCSV = (projection: YearlyData[], inputs: FireInputs, budget: BudgetInputs) => {
-  const headers = ["Year", "Age", "Investment Balance", "Annual Contribution", "Annual Expenses", "Investment Income", "Safe Withdrawal", "FIRE Number", "Income Crossover", "Safe FIRE"];
-  const rows = projection.map((p) => [
-    p.year,
-    p.age,
-    p.balance,
-    p.annualContribution,
-    p.annualExpense,
-    p.investmentIncome,
-    p.safeWithdrawalAmount,
-    p.fireNumber,
-    p.isIncomeCrossover ? "Yes" : "No",
-    p.isFireAchieved ? "Yes" : "No",
-  ]);
-
-  const csvContent = [
-    ["FIRE Calculator Export"],
-    [""],
-    ["Budget:"],
-    ["Monthly Income", budget.monthlyIncome],
-    ["Monthly Expenses", budget.monthlyExpense],
-    ["Monthly Contribution (calculated)", inputs.monthlyContribution],
-    [""],
-    ["Configuration:"],
-    ["Current Balance", inputs.currentBalance],
-    ["Annual Return (%)", inputs.annualReturn],
-    ["Current Age", inputs.currentAge],
-    ["Retirement Age", inputs.retirementAge],
-    ["Inflation Rate (%)", inputs.inflationRate],
-    ["Safe Withdrawal Rate (%)", inputs.safeWithdrawalRate],
-    ["Retirement Strategy", inputs.retirementStrategy === "safe_fire" ? "Safe FIRE (4% rule)" : "Income Crossover"],
-    [""],
-    [headers.join(",")],
-    ...rows.map((row) => row.join(",")),
-  ]
-    .map((row) => (Array.isArray(row) ? row.join(",") : row))
-    .join("\n");
-
-  const blob = new Blob([csvContent], { type: "text/csv" });
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -104,13 +113,6 @@ const exportToCSV = (projection: YearlyData[], inputs: FireInputs, budget: Budge
   a.click();
   window.URL.revokeObjectURL(url);
 };
-
-const compactCurrency = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
 
 const axisTick = { fontSize: 12, fill: "var(--muted-foreground)" };
 
@@ -127,8 +129,8 @@ function NumberField({
   label: string;
   value: number;
   onChange: (value: string) => void;
-  /** Dollar amount: shows "$" and thousands separators */
-  money?: boolean;
+  /** Whole-number money amount: shows the currency symbol and the locale's thousands separators */
+  money?: { symbol: string; locale: string };
   suffix?: string;
   step?: string;
 }) {
@@ -140,7 +142,7 @@ function NumberField({
       <div className="relative">
         {money && (
           <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-            $
+            {money.symbol}
           </span>
         )}
         <Input
@@ -148,9 +150,11 @@ function NumberField({
           type={money ? "text" : "number"}
           inputMode={money ? "numeric" : "decimal"}
           step={step}
-          value={money ? value.toLocaleString("en-US") : value}
-          onChange={(e) => onChange(money ? e.target.value.replace(/[^\d.]/g, "") : e.target.value)}
-          className={cn("h-10 bg-card tabular-nums shadow-none", money && "pl-7", suffix && "pr-9")}
+          value={money ? value.toLocaleString(money.locale) : value}
+          // Money is whole units, so keep digits only: "." and "," are thousands separators in some locales.
+          onChange={(e) => onChange(money ? e.target.value.replace(/\D/g, "") : e.target.value)}
+          className={cn("h-10 bg-card tabular-nums shadow-none", suffix && "pr-9")}
+          style={money ? { paddingLeft: `${1.1 + money.symbol.length * 0.55}rem` } : undefined}
         />
         {suffix && (
           <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -191,11 +195,13 @@ function ChartTooltip({
   payload,
   label,
   labelFor,
+  format,
 }: {
   active?: boolean;
   payload?: { name: string; value: number; color: string; strokeDasharray?: string }[];
   label?: number;
   labelFor: (year: number) => string;
+  format: (value: number) => string;
 }) {
   if (!active || !payload?.length || label === undefined) return null;
   return (
@@ -209,7 +215,7 @@ function ChartTooltip({
             aria-hidden
           />
           <span className="text-muted-foreground">{item.name}</span>
-          <span className="ml-auto pl-4 font-medium tabular-nums">{formatCurrency(item.value)}</span>
+          <span className="ml-auto pl-4 font-medium tabular-nums">{format(item.value)}</span>
         </div>
       ))}
     </div>
@@ -220,10 +226,36 @@ export default function Home() {
   const { user, loading: authLoading, isAuthenticated } = useAuth();
   const isMobile = useIsMobile();
 
-  // Budget inputs (for calculating monthly contribution)
-  // Start from the plan in the URL (shared link or bookmark), else the defaults.
-  const [initialPlan] = useState(() => planFromSearch(window.location.search));
+  // Start from the plan in the URL (shared link or bookmark), else defaults for the browser's language.
+  const [initialPlan] = useState(() => {
+    const base = navigator.language?.toLowerCase().startsWith("vi") ? defaultsFor("VND", "vi") : DEFAULT_PLAN;
+    return planFromSearch(window.location.search, base);
+  });
   const [futureDollars, setFutureDollars] = useState(initialPlan.futureDollars);
+  const [lang, setLang] = useState<Lang>(initialPlan.lang);
+  const [currency, setCurrency] = useState<Currency>(initialPlan.currency);
+  const t = MESSAGES[lang];
+  const locale = LOCALES[lang];
+
+  const money = useMemo(
+    () => new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 0 }),
+    [locale, currency]
+  );
+  const compactMoney = useMemo(
+    () =>
+      new Intl.NumberFormat(locale, { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }),
+    [locale, currency]
+  );
+  const formatMoney = (value: number) => money.format(value);
+  const moneyField = {
+    symbol: money.formatToParts(0).find((part) => part.type === "currency")?.value ?? currency,
+    locale,
+  };
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.title = t.appName;
+  }, [lang, t]);
 
   const [budget, setBudget] = useState<BudgetInputs>({
     monthlyIncome: initialPlan.monthlyIncome,
@@ -258,9 +290,11 @@ export default function Home() {
       safeWithdrawalRate: inputs.safeWithdrawalRate,
       retirementStrategy: inputs.retirementStrategy,
       futureDollars,
+      lang,
+      currency,
     });
     window.history.replaceState(null, "", window.location.pathname + search);
-  }, [inputs, budget, futureDollars]);
+  }, [inputs, budget, futureDollars, lang, currency]);
 
   // Sync monthly contribution and expense from budget
   useEffect(() => {
@@ -271,7 +305,22 @@ export default function Home() {
     }));
   }, [calculatedContribution, budget.monthlyExpense]);
 
-  const [scenarioName, setScenarioName] = useState("My FIRE Plan");
+  // Amounts are never converted. If they are still the starting amounts, swap in ones sized for the new currency.
+  const changeCurrency = (next: Currency) => {
+    const current = amountsFor(currency);
+    if (
+      inputs.currentBalance === current.currentBalance &&
+      budget.monthlyIncome === current.monthlyIncome &&
+      budget.monthlyExpense === current.monthlyExpense
+    ) {
+      const nextAmounts = amountsFor(next);
+      setBudget({ monthlyIncome: nextAmounts.monthlyIncome, monthlyExpense: nextAmounts.monthlyExpense });
+      setInputs((prev) => ({ ...prev, currentBalance: nextAmounts.currentBalance }));
+    }
+    setCurrency(next);
+  };
+
+  const [scenarioName, setScenarioName] = useState(t.defaultScenarioName);
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>("");
 
   const [chartView, setChartView] = useState<"portfolio" | "cashflow">("portfolio");
@@ -302,8 +351,10 @@ export default function Home() {
         retirementStrategy: selectedScenario.retirementStrategy,
       });
       setScenarioName(selectedScenario.name);
-      toast.success(`Loaded scenario: ${selectedScenario.name}`);
+      toast.success(t.loadedScenario(selectedScenario.name));
     }
+    // Only when a different scenario arrives, not when the language changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedScenario]);
 
   const projection = useMemo(() => calculateFireProjection(inputs), [inputs]);
@@ -318,41 +369,41 @@ export default function Home() {
     return projection.find((p) => p.isFireAchieved);
   }, [projection]);
 
-  // Today's dollars remove inflation: year N amounts are divided by (1 + inflation)^N.
+  // Today's money removes inflation: year N amounts are divided by (1 + inflation)^N.
   const toDisplay = (value: number, yearIndex: number) =>
     futureDollars ? value : value / Math.pow(1 + inputs.inflationRate / 100, yearIndex);
 
   const chartData = projection.map((p, i) => ({
     year: p.year,
-    "Investment Balance": Math.round(toDisplay(p.balance, i)),
-    "Annual Expenses": Math.round(toDisplay(p.annualExpense, i)),
-    "Investment Income": Math.round(toDisplay(p.investmentIncome, i)),
-    "FIRE Number": Math.round(toDisplay(p.fireNumber, i)),
+    balance: Math.round(toDisplay(p.balance, i)),
+    expenses: Math.round(toDisplay(p.annualExpense, i)),
+    returns: Math.round(toDisplay(p.investmentIncome, i)),
+    fireNumber: Math.round(toDisplay(p.fireNumber, i)),
   }));
 
   const createScenarioMutation = trpc.fireScenarios.create.useMutation({
     onSuccess: () => {
-      toast.success("Scenario saved successfully!");
-      setScenarioName("My FIRE Plan");
+      toast.success(t.savedScenarioOk);
+      setScenarioName(t.defaultScenarioName);
     },
     onError: (error) => {
-      toast.error(`Failed to save: ${error.message}`);
+      toast.error(t.saveFailed(error.message));
     },
   });
 
   const deleteScenarioMutation = trpc.fireScenarios.delete.useMutation({
     onSuccess: () => {
-      toast.success("Scenario deleted successfully!");
+      toast.success(t.deletedScenarioOk);
       setSelectedScenarioId("");
     },
     onError: (error) => {
-      toast.error(`Failed to delete: ${error.message}`);
+      toast.error(t.deleteFailed(error.message));
     },
   });
 
   const handleSaveScenario = () => {
     if (!isAuthenticated) {
-      toast.error("Please login to save scenarios");
+      toast.error(t.loginToSave);
       return;
     }
 
@@ -372,7 +423,7 @@ export default function Home() {
 
   const handleDeleteScenario = () => {
     if (!selectedScenarioId) return;
-    if (confirm("Are you sure you want to delete this scenario?")) {
+    if (confirm(t.confirmDelete)) {
       deleteScenarioMutation.mutate({ id: parseInt(selectedScenarioId) });
     }
   };
@@ -382,26 +433,23 @@ export default function Home() {
     setInputs((prev) => ({ ...prev, [key]: numValue }));
   };
 
-  const applyPreset = (preset: ScenarioPreset) => {
-    setInputs((prev) => ({
-      ...prev,
-      annualReturn: preset.annualReturn,
-    }));
+  const applyPreset = (annualReturn: number) => {
+    setInputs((prev) => ({ ...prev, annualReturn }));
     setSelectedScenarioId("");
   };
 
   const handleShare = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
-      toast.success("Link copied. It opens this plan with your numbers.");
+      toast.success(t.linkCopied);
     } catch {
-      toast.error("Couldn't copy. Copy the link from the address bar instead.");
+      toast.error(t.copyFailed);
     }
   };
 
   const handleExportCSV = () => {
-    exportToCSV(projection, inputs, budget);
-    toast.success("Projection exported to CSV");
+    exportToCSV(projection, inputs, budget, currency, t);
+    toast.success(t.csvExported);
   };
 
   if (authLoading) {
@@ -419,15 +467,13 @@ export default function Home() {
   const fiPoint = isCrossover ? incomeCrossoverPoint : safeFIREPoint;
   const otherPoint = isCrossover ? safeFIREPoint : incomeCrossoverPoint;
   const yearsToFire = fiPoint ? fiPoint.year - projection[0].year : null;
-  const fiReason = isCrossover
-    ? `investment returns (${inputs.annualReturn}%) cover your inflation-adjusted expenses`
-    : `a ${inputs.safeWithdrawalRate}% withdrawal covers your inflation-adjusted expenses`;
-  const activePreset = SCENARIO_PRESETS.find((p) => p.annualReturn === inputs.annualReturn)?.name;
+  const fiReason = isCrossover ? t.reasonCrossover(inputs.annualReturn) : t.reasonSafe(inputs.safeWithdrawalRate);
+  const activePreset = RETURN_PRESETS.find((p) => p.annualReturn === inputs.annualReturn)?.id;
   const tickEvery = isMobile ? 10 : 5;
   const xTicks = chartData.filter((_, i) => i % tickEvery === 0).map((d) => d.year);
   const tooltipLabel = (year: number) => {
     const point = projection.find((p) => p.year === year);
-    return point ? `${year} · age ${point.age}` : String(year);
+    return point ? t.yearAge(year, point.age) : String(year);
   };
   const xAxis = (
     <XAxis
@@ -442,40 +488,60 @@ export default function Home() {
   );
   const yAxis = (
     <YAxis
-      tickFormatter={(v) => compactCurrency.format(v)}
+      tickFormatter={(v) => compactMoney.format(v)}
       tick={axisTick}
       tickLine={false}
       tickMargin={8}
       axisLine={false}
-      width={isMobile ? 48 : 60}
+      width={isMobile ? 62 : 72}
     />
   );
   const tooltip = (
-    <RechartsTooltip cursor={{ stroke: "var(--input)" }} content={<ChartTooltip labelFor={tooltipLabel} />} />
+    <RechartsTooltip
+      cursor={{ stroke: "var(--input)" }}
+      content={<ChartTooltip labelFor={tooltipLabel} format={formatMoney} />}
+    />
   );
   const sectionTitle = "text-sm font-semibold";
+  const fieldLabel = "text-sm font-normal text-muted-foreground";
 
   return (
     <div className="min-h-screen">
       <header className="border-b bg-card">
-        <div className="container mx-auto flex h-14 max-w-6xl items-center justify-between gap-4">
+        <div className="container mx-auto flex h-14 max-w-6xl items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <span className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground" aria-hidden>
               <TrendingUp className="size-3.5" strokeWidth={2.5} />
             </span>
-            <span className="font-semibold tracking-tight">FIRE Calculator</span>
+            <span className="font-semibold tracking-tight">{t.appName}</span>
           </div>
           <div className="flex items-center gap-1">
             {!isAuthenticated && import.meta.env.VITE_OAUTH_PORTAL_URL && (
               <Button asChild variant="ghost" size="sm">
-                <a href={getLoginUrl()}>Log in</a>
+                <a href={getLoginUrl()}>{t.logIn}</a>
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={handleShare}>
+            <div className="mr-1 flex rounded-md bg-muted p-0.5" role="group" aria-label={t.language}>
+              {(["en", "vi"] as const).map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => setLang(l)}
+                  aria-pressed={lang === l}
+                  className={cn(
+                    "cursor-pointer rounded-sm px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+                    lang === l && "bg-card text-foreground shadow-sm"
+                  )}
+                >
+                  {l.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <Button variant="ghost" size="sm" onClick={handleShare} aria-label={t.share}>
               <Link2 className="w-4 h-4" />
-              Share
+              <span className="hidden sm:inline">{t.share}</span>
             </Button>
-            <HelpDialog />
+            <HelpDialog t={t} />
           </div>
         </div>
       </header>
@@ -485,66 +551,85 @@ export default function Home() {
           {/* Inputs */}
           <Card className="order-2 gap-0 p-0 shadow-none lg:order-1">
             <section className="space-y-4 p-4 sm:p-5">
-              <h2 className={sectionTitle}>You</h2>
+              <h2 className={sectionTitle}>{t.you}</h2>
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   id="currentAge"
-                  label="Current age"
+                  label={t.currentAge}
                   value={inputs.currentAge}
                   onChange={(v) => updateInput("currentAge", v)}
                 />
                 <NumberField
                   id="retirementAge"
-                  label="Retirement age"
+                  label={t.retirementAge}
                   value={inputs.retirementAge}
                   onChange={(v) => updateInput("retirementAge", v)}
                 />
               </div>
-              <NumberField
-                id="currentBalance"
-                label="Current investments"
-                money
-                value={inputs.currentBalance}
-                onChange={(v) => updateInput("currentBalance", v)}
-              />
+              <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-3">
+                <NumberField
+                  id="currentBalance"
+                  label={t.currentInvestments}
+                  money={moneyField}
+                  value={inputs.currentBalance}
+                  onChange={(v) => updateInput("currentBalance", v)}
+                />
+                <div className="space-y-1.5">
+                  <Label htmlFor="currency" className={fieldLabel}>
+                    {t.currency}
+                  </Label>
+                  <Select value={currency} onValueChange={(v) => changeCurrency(v as Currency)}>
+                    <SelectTrigger id="currency" className="h-10 w-full bg-card shadow-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CURRENCIES.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </section>
 
             <section className="space-y-4 border-t p-4 sm:p-5">
-              <h2 className={sectionTitle}>Monthly budget</h2>
+              <h2 className={sectionTitle}>{t.monthlyBudget}</h2>
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   id="monthlyIncome"
-                  label="Income"
-                  money
+                  label={t.income}
+                  money={moneyField}
                   value={budget.monthlyIncome}
                   onChange={(v) => setBudget((prev) => ({ ...prev, monthlyIncome: parseFloat(v) || 0 }))}
                 />
                 <NumberField
                   id="budgetExpense"
-                  label="Expenses"
-                  money
+                  label={t.expenses}
+                  money={moneyField}
                   value={budget.monthlyExpense}
                   onChange={(v) => setBudget((prev) => ({ ...prev, monthlyExpense: parseFloat(v) || 0 }))}
                 />
               </div>
-              <div className="flex items-baseline justify-between rounded-md bg-muted px-3 py-2.5">
-                <span className="text-sm text-muted-foreground">Invested each month</span>
-                <span className="font-semibold tabular-nums">{formatCurrency(monthlyInvested)}</span>
+              <div className="flex items-baseline justify-between gap-3 rounded-md bg-muted px-3 py-2.5">
+                <span className="text-sm text-muted-foreground">{t.investedMonthly}</span>
+                <span className="font-semibold tabular-nums">{formatMoney(monthlyInvested)}</span>
               </div>
             </section>
 
             <section className="space-y-4 border-t p-4 sm:p-5">
-              <h2 className={sectionTitle}>Assumptions</h2>
+              <h2 className={sectionTitle}>{t.assumptions}</h2>
 
               {isAuthenticated && savedScenarios.length > 0 && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="scenario-select" className="text-sm font-normal text-muted-foreground">
-                    Saved scenario
+                  <Label htmlFor="scenario-select" className={fieldLabel}>
+                    {t.savedScenario}
                   </Label>
                   <div className="flex gap-2">
                     <Select value={selectedScenarioId} onValueChange={setSelectedScenarioId}>
                       <SelectTrigger id="scenario-select" className="h-10 flex-1 bg-card shadow-none">
-                        <SelectValue placeholder="Select a scenario" />
+                        <SelectValue placeholder={t.selectScenario} />
                       </SelectTrigger>
                       <SelectContent>
                         {savedScenarios.map((scenario) => (
@@ -560,7 +645,7 @@ export default function Home() {
                         disabled={deleteScenarioMutation.isPending}
                         variant="outline"
                         size="icon"
-                        aria-label="Delete scenario"
+                        aria-label={t.deleteScenario}
                         className="size-10 shadow-none"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -573,43 +658,44 @@ export default function Home() {
               <div className="space-y-3">
                 <NumberField
                   id="annualReturn"
-                  label="Expected annual return"
+                  label={t.expectedReturn}
                   suffix="%"
                   step="0.1"
                   value={inputs.annualReturn}
                   onChange={(v) => updateInput("annualReturn", v)}
                 />
                 <Slider
-                  aria-label="Expected annual return"
+                  aria-label={t.expectedReturn}
                   min={1}
                   max={15}
                   step={0.1}
                   value={[inputs.annualReturn]}
                   onValueChange={([v]) => setInputs((prev) => ({ ...prev, annualReturn: v }))}
                 />
-                <div className="grid grid-cols-3 rounded-md bg-muted p-1" role="group" aria-label="Return presets">
-                  {SCENARIO_PRESETS.map((preset) => (
+                <div className="grid grid-cols-3 rounded-md bg-muted p-1" role="group" aria-label={t.returnPresets}>
+                  {RETURN_PRESETS.map((preset) => (
                     <button
-                      key={preset.name}
+                      key={preset.id}
                       type="button"
-                      onClick={() => applyPreset(preset)}
-                      aria-pressed={activePreset === preset.name}
+                      onClick={() => applyPreset(preset.annualReturn)}
+                      aria-pressed={activePreset === preset.id}
                       className={cn(
                         "cursor-pointer rounded-sm px-2 py-1.5 text-xs leading-4 font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
-                        activePreset === preset.name && "bg-card text-foreground shadow-sm"
+                        activePreset === preset.id && "bg-card text-foreground shadow-sm"
                       )}
                     >
-                      <span className="block">{preset.name}</span>
-                      <span className="block font-normal text-muted-foreground tabular-nums">{preset.annualReturn}%</span>
+                      <span className="block">{t.presetNames[preset.id]}</span>
+                      <span className="block font-normal text-muted-foreground tabular-nums">≈{preset.annualReturn}%</span>
                     </button>
                   ))}
                 </div>
+                <p className="text-xs text-muted-foreground">{t.presetsSource}</p>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   id="inflationRate"
-                  label="Inflation"
+                  label={t.inflation}
                   suffix="%"
                   step="0.1"
                   value={inputs.inflationRate}
@@ -617,7 +703,7 @@ export default function Home() {
                 />
                 <NumberField
                   id="safeWithdrawalRate"
-                  label="Withdrawal rate"
+                  label={t.withdrawalRate}
                   suffix="%"
                   step="0.1"
                   value={inputs.safeWithdrawalRate}
@@ -626,8 +712,8 @@ export default function Home() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="retirementStrategy" className="text-sm font-normal text-muted-foreground">
-                  Stop investing when
+                <Label htmlFor="retirementStrategy" className={fieldLabel}>
+                  {t.stopInvestingWhen}
                 </Label>
                 <Select
                   value={inputs.retirementStrategy}
@@ -639,18 +725,12 @@ export default function Home() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="safe_fire">
-                      A {inputs.safeWithdrawalRate}% withdrawal covers expenses
-                    </SelectItem>
-                    <SelectItem value="income_crossover">
-                      Returns ({inputs.annualReturn}%) cover expenses
-                    </SelectItem>
+                    <SelectItem value="safe_fire">{t.stopSafe(inputs.safeWithdrawalRate)}</SelectItem>
+                    <SelectItem value="income_crossover">{t.stopCrossover(inputs.annualReturn)}</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {inputs.retirementStrategy === "safe_fire"
-                    ? "Conservative: the safe-withdrawal rule."
-                    : "Aggressive: less margin for bad markets."}
+                  {isCrossover ? t.stopCrossoverHint : t.stopSafeHint}
                 </p>
               </div>
             </section>
@@ -658,8 +738,8 @@ export default function Home() {
             {isAuthenticated && (
               <section className="space-y-3 border-t p-4 sm:p-5">
                 <div className="space-y-1.5">
-                  <Label htmlFor="scenarioName" className="text-sm font-normal text-muted-foreground">
-                    Scenario name
+                  <Label htmlFor="scenarioName" className={fieldLabel}>
+                    {t.scenarioName}
                   </Label>
                   <Input
                     id="scenarioName"
@@ -678,7 +758,7 @@ export default function Home() {
                   ) : (
                     <Save className="w-4 h-4" />
                   )}
-                  Save scenario
+                  {t.saveScenario}
                 </Button>
               </section>
             )}
@@ -687,56 +767,48 @@ export default function Home() {
           {/* Results */}
           <div className="order-1 space-y-6 lg:sticky lg:top-6 lg:order-2">
             <Card className="gap-0 p-4 shadow-none sm:p-6">
-              <h1 className="text-sm text-muted-foreground">Financial independence</h1>
+              <h1 className="text-sm text-muted-foreground">{t.financialIndependence}</h1>
               {fiPoint ? (
                 <>
                   <div className="mt-1 flex flex-wrap items-baseline gap-x-3">
                     <span className="text-5xl font-semibold tracking-tight tabular-nums">{fiPoint.year}</span>
-                    <span className="text-xl text-muted-foreground">at age {fiPoint.age}</span>
+                    <span className="text-xl text-muted-foreground">{t.atAge(fiPoint.age)}</span>
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    {yearsToFire === 0
-                      ? `Already there: ${fiReason} today.`
-                      : `In ${yearsToFire} ${yearsToFire === 1 ? "year" : "years"}, when ${fiReason}.`}
+                    {yearsToFire === 0 ? t.alreadyThere(fiReason) : t.inYears(yearsToFire ?? 0, fiReason)}
                   </p>
                 </>
               ) : (
                 <>
-                  <p className="mt-1 text-xl font-semibold tracking-tight">Not within 50 years</p>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Invest more each month, lower expenses, or revisit the return assumption.
-                  </p>
+                  <p className="mt-1 text-xl font-semibold tracking-tight">{t.notWithin50}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">{t.notWithin50Hint}</p>
                 </>
               )}
 
               <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-5 border-t pt-5 xl:grid-cols-4">
                 <Stat
-                  label="FIRE number today"
-                  value={formatCurrency(projection[0].fireNumber)}
+                  label={t.fireNumberToday}
+                  value={formatMoney(projection[0].fireNumber)}
                   detail={
                     inputs.safeWithdrawalRate > 0
-                      ? `${+(100 / inputs.safeWithdrawalRate).toFixed(1)}× annual expenses`
+                      ? t.timesExpenses(+(100 / inputs.safeWithdrawalRate).toFixed(1))
                       : undefined
                   }
                 />
                 <Stat
-                  label="Portfolio at FI"
-                  value={
-                    fiPoint
-                      ? formatCurrency(toDisplay(fiPoint.balance, fiPoint.year - projection[0].year))
-                      : "—"
-                  }
-                  detail={fiPoint ? `in ${fiPoint.year}${futureDollars ? "" : ", today's dollars"}` : undefined}
+                  label={t.portfolioAtFi}
+                  value={fiPoint ? formatMoney(toDisplay(fiPoint.balance, fiPoint.year - projection[0].year)) : "—"}
+                  detail={fiPoint ? t.inYear(fiPoint.year, !futureDollars) : undefined}
                 />
                 <Stat
-                  label="Savings rate"
+                  label={t.savingsRate}
                   value={`${Math.round(savingsRate * 100)}%`}
-                  detail={`${formatCurrency(monthlyInvested)} a month`}
+                  detail={t.perMonth(formatMoney(monthlyInvested))}
                 />
                 <Stat
-                  label={isCrossover ? `${inputs.safeWithdrawalRate}% rule reached` : "Income crossover"}
+                  label={isCrossover ? t.ruleReached(inputs.safeWithdrawalRate) : t.incomeCrossover}
                   value={otherPoint ? String(otherPoint.year) : "—"}
-                  detail={otherPoint ? `age ${otherPoint.age}` : isCrossover ? "not after you stop investing" : undefined}
+                  detail={otherPoint ? t.ageOnly(otherPoint.age) : isCrossover ? t.notAfterStopping : undefined}
                 />
               </div>
             </Card>
@@ -744,22 +816,20 @@ export default function Home() {
             <Card className="gap-0 p-4 shadow-none sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-semibold">Projection</h2>
+                  <h2 className="text-base font-semibold">{t.projection}</h2>
                   <p className="text-sm text-muted-foreground">
-                    {chartView === "portfolio"
-                      ? "Portfolio balance against the amount you need."
-                      : "Investment returns against yearly expenses."}{" "}
-                    {futureDollars ? "Future dollars." : "In today's dollars."}
+                    {chartView === "portfolio" ? t.portfolioSubtitle : t.cashflowSubtitle}{" "}
+                    {futureDollars ? t.inFutureValues : t.inTodaysMoney}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <Tabs value={chartView} onValueChange={(v) => setChartView(v as typeof chartView)}>
                     <TabsList>
-                      <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
-                      <TabsTrigger value="cashflow">Cash flow</TabsTrigger>
+                      <TabsTrigger value="portfolio">{t.portfolio}</TabsTrigger>
+                      <TabsTrigger value="cashflow">{t.cashFlow}</TabsTrigger>
                     </TabsList>
                   </Tabs>
-                  <Button onClick={handleExportCSV} variant="ghost" size="sm" aria-label="Export projection as CSV">
+                  <Button onClick={handleExportCSV} variant="ghost" size="sm" aria-label={t.exportCsv}>
                     <Download className="w-4 h-4" />
                     CSV
                   </Button>
@@ -769,18 +839,18 @@ export default function Home() {
               <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
                 {chartView === "portfolio" ? (
                   <>
-                    <LegendItem color="var(--chart-1)" label="Portfolio balance" />
-                    <LegendItem color="var(--chart-4)" label="FIRE number" dashed />
+                    <LegendItem color="var(--chart-1)" label={t.portfolioBalance} />
+                    <LegendItem color="var(--chart-4)" label={t.fireNumber} dashed />
                   </>
                 ) : (
                   <>
-                    <LegendItem color="var(--chart-2)" label="Investment returns" />
-                    <LegendItem color="var(--chart-3)" label="Expenses" />
+                    <LegendItem color="var(--chart-2)" label={t.investmentReturns} />
+                    <LegendItem color="var(--chart-3)" label={t.expenses} />
                   </>
                 )}
                 <label className="ml-auto flex cursor-pointer items-center gap-2">
                   <Switch checked={futureDollars} onCheckedChange={setFutureDollars} />
-                  Future dollars
+                  {t.futureValues}
                 </label>
               </div>
 
@@ -797,13 +867,13 @@ export default function Home() {
                           x={fiPoint.year}
                           stroke="var(--muted-foreground)"
                           strokeDasharray="2 3"
-                          label={{ value: `FI ${fiPoint.year}`, position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                          label={{ value: t.fiMarker(fiPoint.year), position: "top", fill: "var(--foreground)", fontSize: 12 }}
                         />
                       )}
                       <Area
                         type="monotone"
-                        dataKey="Investment Balance"
-                        name="Portfolio balance"
+                        dataKey="balance"
+                        name={t.portfolioBalance}
                         stroke="var(--chart-1)"
                         strokeWidth={2}
                         fill="var(--chart-1)"
@@ -812,8 +882,8 @@ export default function Home() {
                       />
                       <Line
                         type="monotone"
-                        dataKey="FIRE Number"
-                        name="FIRE number"
+                        dataKey="fireNumber"
+                        name={t.fireNumber}
                         stroke="var(--chart-4)"
                         strokeWidth={1.5}
                         strokeDasharray="4 4"
@@ -832,13 +902,18 @@ export default function Home() {
                           x={incomeCrossoverPoint.year}
                           stroke="var(--muted-foreground)"
                           strokeDasharray="2 3"
-                          label={{ value: `Crossover ${incomeCrossoverPoint.year}`, position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                          label={{
+                            value: t.crossoverMarker(incomeCrossoverPoint.year),
+                            position: "top",
+                            fill: "var(--foreground)",
+                            fontSize: 12,
+                          }}
                         />
                       )}
                       <Line
                         type="monotone"
-                        dataKey="Investment Income"
-                        name="Investment returns"
+                        dataKey="returns"
+                        name={t.investmentReturns}
                         stroke="var(--chart-2)"
                         strokeWidth={2}
                         dot={false}
@@ -846,8 +921,8 @@ export default function Home() {
                       />
                       <Line
                         type="monotone"
-                        dataKey="Annual Expenses"
-                        name="Expenses"
+                        dataKey="expenses"
+                        name={t.expenses}
                         stroke="var(--chart-3)"
                         strokeWidth={2}
                         dot={false}
@@ -858,9 +933,7 @@ export default function Home() {
                 </ResponsiveContainer>
               </div>
 
-              <p className="mt-4 text-xs text-muted-foreground">
-                After you reach FI, contributions stop and yearly expenses come out of the portfolio.
-              </p>
+              <p className="mt-4 text-xs text-muted-foreground">{t.footnote}</p>
             </Card>
           </div>
         </div>
