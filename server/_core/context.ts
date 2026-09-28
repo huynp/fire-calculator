@@ -16,7 +16,7 @@ export async function createContext(
   // DEV MODE: Skip auth if OAuth not configured
   const isOAuthConfigured = process.env.OAUTH_SERVER_URL && process.env.VITE_APP_ID;
 
-  if (!isOAuthConfigured) {
+  if (!isOAuthConfigured && process.env.NODE_ENV === "development") {
     // Mock user for development
     user = {
       id: "dev-user-id",

@@ -388,7 +388,7 @@ export default function Home() {
             Calculate your path to Financial Independence, Retire Early
           </p>
           
-          {!isAuthenticated && (
+          {!isAuthenticated && import.meta.env.VITE_OAUTH_PORTAL_URL && (
             <div className="mt-6">
               <a href={getLoginUrl()}>
                 <Button className="glass-button">

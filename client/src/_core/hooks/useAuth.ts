@@ -47,7 +47,7 @@ export function useAuth(options?: UseAuthOptions) {
 
   const state = useMemo(() => {
     // DEV MODE: Mock user if OAuth not configured
-    const mockUser = !isOAuthConfigured ? {
+    const mockUser = !isOAuthConfigured && import.meta.env.DEV ? {
       id: "dev-user",
       name: "Dev User",
       email: "dev@localhost"
