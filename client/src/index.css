@@ -4,8 +4,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "DM Sans", sans-serif;
-  --font-heading: "Outfit", sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -48,43 +47,43 @@
 }
 
 :root {
-  /* Glassmorphism Palette - Dark Mode Default */
-  --primary: oklch(0.7 0.15 260); /* Bright Purple/Blue */
-  --primary-foreground: oklch(1 0 0);
-  
-  --background: oklch(0.15 0.05 260); /* Deep Midnight Blue */
-  --foreground: oklch(0.95 0.01 260); /* White-ish */
-  
-  --card: oklch(1 0 0 / 0.1); /* Glassy White 10% */
-  --card-foreground: oklch(1 0 0);
-  
-  --popover: oklch(0.15 0.05 260 / 0.9);
-  --popover-foreground: oklch(1 0 0);
-  
-  --secondary: oklch(1 0 0 / 0.05);
-  --secondary-foreground: oklch(0.9 0 0);
-  
-  --muted: oklch(1 0 0 / 0.05);
-  --muted-foreground: oklch(0.7 0.02 260);
-  
-  --accent: oklch(0.7 0.15 260 / 0.2);
-  --accent-foreground: oklch(1 0 0);
-  
-  --destructive: oklch(0.6 0.2 20);
-  --destructive-foreground: oklch(1 0 0);
-  
-  --border: oklch(1 0 0 / 0.15);
-  --input: oklch(1 0 0 / 0.1);
-  --ring: oklch(0.7 0.15 260);
-  
-  --radius: 1rem;
+  /* Light, flat finance palette: neutral surfaces, one green accent */
+  --primary: #047857;
+  --primary-foreground: #ffffff;
 
-  /* Chart Colors - Neon/Vibrant */
-  --chart-1: oklch(0.7 0.15 260); /* Purple */
-  --chart-2: oklch(0.75 0.15 180); /* Cyan */
-  --chart-3: oklch(0.8 0.15 320); /* Pink */
-  --chart-4: oklch(0.85 0.15 60); /* Orange */
-  --chart-5: oklch(0.9 0.15 100); /* Yellow */
+  --background: #f7f7f5;
+  --foreground: #111110;
+
+  --card: #ffffff;
+  --card-foreground: #111110;
+
+  --popover: #ffffff;
+  --popover-foreground: #111110;
+
+  --secondary: #f1f0ed;
+  --secondary-foreground: #111110;
+
+  --muted: #f1f0ed;
+  --muted-foreground: #6b6a66;
+
+  --accent: #f1f0ed;
+  --accent-foreground: #111110;
+
+  --destructive: #b42318;
+  --destructive-foreground: #ffffff;
+
+  --border: #e6e4df;
+  --input: #dcdad4;
+  --ring: #047857;
+
+  --radius: 0.5rem;
+
+  /* Chart series (validated light-mode categorical pair + accent) */
+  --chart-1: #047857; /* balance */
+  --chart-2: #2a78d6; /* investment income */
+  --chart-3: #eb6834; /* expenses */
+  --chart-4: #6b6a66; /* FIRE number reference */
+  --chart-5: #52514e;
 }
 
 @layer base {
@@ -93,31 +92,10 @@
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    background-image: url('/images/background.jpg');
-    background-size: cover;
-    background-position: center;
-    background-attachment: fixed;
-    background-repeat: no-repeat;
-  }
-  
-  h1, h2, h3, h4, h5, h6 {
-    @apply font-heading font-bold;
   }
 }
 
 @layer components {
-  .glass-panel {
-    @apply bg-card backdrop-blur-md border border-white/10 shadow-xl rounded-2xl;
-  }
-  
-  .glass-input {
-    @apply bg-white/5 border-white/10 text-white placeholder:text-white/40 focus:border-primary/50 focus:ring-primary/50 backdrop-blur-sm transition-all;
-  }
-  
-  .glass-button {
-    @apply bg-primary/80 hover:bg-primary text-white shadow-lg shadow-primary/20 backdrop-blur-sm transition-all hover:scale-[1.02] active:scale-[0.98];
-  }
-
   .container {
     width: 100%;
     margin-left: auto;

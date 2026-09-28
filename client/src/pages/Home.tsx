@@ -1,9 +1,11 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Slider } from "@/components/ui/slider";
+import { useIsMobile } from "@/hooks/useMobile";
 import {
   Select,
   SelectContent,
@@ -12,20 +14,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getLoginUrl } from "@/const";
+import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useEffect } from "react";
 import {
+  ComposedChart,
+  Area,
   LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip as RechartsTooltip,
-  Legend,
   ResponsiveContainer,
   ReferenceLine,
 } from "recharts";
-import { Loader2, Save, TrendingUp, Download, Zap, Trash2 } from "lucide-react";
+import { Loader2, Save, Download, Trash2, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
 type RetirementStrategy = "income_crossover" | "safe_fire";
@@ -60,22 +64,15 @@ interface YearlyData {
   isIncomeCrossover: boolean; // Income > Expenses
 }
 
-interface ChartLineVisibility {
-  balance: boolean;
-  expenses: boolean;
-  income: boolean;
-}
-
 interface ScenarioPreset {
   name: string;
   annualReturn: number;
-  monthlyContribution: number;
 }
 
 const SCENARIO_PRESETS: ScenarioPreset[] = [
-  { name: "Conservative", annualReturn: 5, monthlyContribution: 500 },
-  { name: "Moderate", annualReturn: 7, monthlyContribution: 1000 },
-  { name: "Aggressive", annualReturn: 10, monthlyContribution: 2000 },
+  { name: "Conservative", annualReturn: 5 },
+  { name: "Moderate", annualReturn: 7 },
+  { name: "Aggressive", annualReturn: 10 },
 ];
 
 const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
@@ -203,8 +200,120 @@ const exportToCSV = (projection: YearlyData[], inputs: FireInputs, budget: Budge
   window.URL.revokeObjectURL(url);
 };
 
+const compactCurrency = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+const axisTick = { fontSize: 12, fill: "var(--muted-foreground)" };
+
+function NumberField({
+  id,
+  label,
+  value,
+  onChange,
+  money,
+  suffix,
+  step,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  onChange: (value: string) => void;
+  /** Dollar amount: shows "$" and thousands separators */
+  money?: boolean;
+  suffix?: string;
+  step?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-sm font-normal text-muted-foreground">
+        {label}
+      </Label>
+      <div className="relative">
+        {money && (
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+            $
+          </span>
+        )}
+        <Input
+          id={id}
+          type={money ? "text" : "number"}
+          inputMode={money ? "numeric" : "decimal"}
+          step={step}
+          value={money ? value.toLocaleString("en-US") : value}
+          onChange={(e) => onChange(money ? e.target.value.replace(/[^\d.]/g, "") : e.target.value)}
+          className={cn("h-10 bg-card tabular-nums shadow-none", money && "pl-7", suffix && "pr-9")}
+        />
+        {suffix && (
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+            {suffix}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="xl:border-l xl:pl-5 xl:first:border-l-0 xl:first:pl-0">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xl font-semibold tracking-tight tabular-nums">{value}</p>
+      {detail && <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>}
+    </div>
+  );
+}
+
+function LegendItem({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
+  return (
+    <span className="flex items-center gap-2">
+      <span
+        className="inline-block w-4 border-t-2"
+        style={{ borderColor: color, borderStyle: dashed ? "dashed" : "solid" }}
+        aria-hidden
+      />
+      {label}
+    </span>
+  );
+}
+
+// Tooltip rows keep text in ink; a line swatch carries the series identity.
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  labelFor,
+}: {
+  active?: boolean;
+  payload?: { name: string; value: number; color: string; strokeDasharray?: string }[];
+  label?: number;
+  labelFor: (year: number) => string;
+}) {
+  if (!active || !payload?.length || label === undefined) return null;
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2 text-sm shadow-sm">
+      <p className="mb-1 font-medium">{labelFor(label)}</p>
+      {payload.map((item) => (
+        <div key={item.name} className="flex items-center gap-2">
+          <span
+            className="inline-block w-3 border-t-2"
+            style={{ borderColor: item.color, borderStyle: item.strokeDasharray ? "dashed" : "solid" }}
+            aria-hidden
+          />
+          <span className="text-muted-foreground">{item.name}</span>
+          <span className="ml-auto pl-4 font-medium tabular-nums">{formatCurrency(item.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Home() {
   const { user, loading: authLoading, isAuthenticated } = useAuth();
+  const isMobile = useIsMobile();
 
   // Budget inputs (for calculating monthly contribution)
   const [budget, setBudget] = useState<BudgetInputs>({
@@ -217,7 +326,7 @@ export default function Home() {
 
   const [inputs, setInputs] = useState<FireInputs>({
     currentBalance: 500000,
-    annualReturn: 6,
+    annualReturn: 7,
     monthlyContribution: 1000,
     monthlyExpense: 3000,
     currentAge: 36,
@@ -239,11 +348,7 @@ export default function Home() {
   const [scenarioName, setScenarioName] = useState("My FIRE Plan");
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>("");
 
-  const [chartLineVisibility, setChartLineVisibility] = useState<ChartLineVisibility>({
-    balance: false,
-    expenses: true,
-    income: true,
-  });
+  const [chartView, setChartView] = useState<"portfolio" | "cashflow">("portfolio");
 
   // Fetch saved scenarios
   const { data: savedScenarios = [] } = trpc.fireScenarios.list.useQuery(undefined, {
@@ -292,6 +397,7 @@ export default function Home() {
       "Investment Balance": p.balance,
       "Annual Expenses": p.annualExpense,
       "Investment Income": p.investmentIncome,
+      "FIRE Number": p.fireNumber,
     }));
   }, [projection]);
 
@@ -346,21 +452,12 @@ export default function Home() {
     setInputs((prev) => ({ ...prev, [key]: numValue }));
   };
 
-  const toggleLineVisibility = (line: keyof ChartLineVisibility) => {
-    setChartLineVisibility((prev) => ({
-      ...prev,
-      [line]: !prev[line],
-    }));
-  };
-
   const applyPreset = (preset: ScenarioPreset) => {
     setInputs((prev) => ({
       ...prev,
       annualReturn: preset.annualReturn,
-      monthlyContribution: preset.monthlyContribution,
     }));
     setSelectedScenarioId("");
-    toast.success(`Applied ${preset.name} scenario`);
   };
 
   const handleExportCSV = () => {
@@ -371,568 +468,441 @@ export default function Home() {
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
+  const monthlyInvested = inputs.monthlyContribution;
+  const savingsRate = budget.monthlyIncome > 0 ? monthlyInvested / budget.monthlyIncome : 0;
+  const yearsToFire = safeFIREPoint ? safeFIREPoint.year - projection[0].year : null;
+  const activePreset = SCENARIO_PRESETS.find((p) => p.annualReturn === inputs.annualReturn)?.name;
+  const tickEvery = isMobile ? 10 : 5;
+  const xTicks = chartData.filter((_, i) => i % tickEvery === 0).map((d) => d.year);
+  const tooltipLabel = (year: number) => {
+    const point = projection.find((p) => p.year === year);
+    return point ? `${year} · age ${point.age}` : String(year);
+  };
+  const xAxis = (
+    <XAxis
+      dataKey="year"
+      ticks={xTicks}
+      tick={axisTick}
+      tickLine={false}
+      tickMargin={8}
+      padding={{ left: 8 }}
+      axisLine={{ stroke: "var(--border)" }}
+    />
+  );
+  const yAxis = (
+    <YAxis
+      tickFormatter={(v) => compactCurrency.format(v)}
+      tick={axisTick}
+      tickLine={false}
+      tickMargin={8}
+      axisLine={false}
+      width={isMobile ? 48 : 60}
+    />
+  );
+  const tooltip = (
+    <RechartsTooltip cursor={{ stroke: "var(--input)" }} content={<ChartTooltip labelFor={tooltipLabel} />} />
+  );
+  const sectionTitle = "text-sm font-semibold";
+
   return (
-    <div className="min-h-screen py-8 px-4">
-      <div className="container mx-auto max-w-7xl">
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-6xl font-heading font-bold mb-4 bg-gradient-to-r from-primary via-purple-400 to-pink-400 bg-clip-text text-transparent">
-            FIRE Calculator
-          </h1>
-          <p className="text-xl text-white/70 font-sans">
-            Calculate your path to Financial Independence, Retire Early
-          </p>
-          
+    <div className="min-h-screen">
+      <header className="border-b bg-card">
+        <div className="container mx-auto flex h-14 max-w-6xl items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <span className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground" aria-hidden>
+              <TrendingUp className="size-3.5" strokeWidth={2.5} />
+            </span>
+            <span className="font-semibold tracking-tight">FIRE Calculator</span>
+          </div>
           {!isAuthenticated && import.meta.env.VITE_OAUTH_PORTAL_URL && (
-            <div className="mt-6">
-              <a href={getLoginUrl()}>
-                <Button className="glass-button">
-                  Login to Save Scenarios
-                </Button>
-              </a>
-            </div>
+            <Button asChild variant="ghost" size="sm">
+              <a href={getLoginUrl()}>Log in</a>
+            </Button>
           )}
         </div>
+      </header>
 
-        {/* Scenario Presets */}
-        <div className="mb-8 flex flex-wrap gap-3 justify-center">
-          {SCENARIO_PRESETS.map((preset) => (
-            <Button
-              key={preset.name}
-              onClick={() => applyPreset(preset)}
-              variant="outline"
-              className="glass-button"
-            >
-              <Zap className="w-4 h-4 mr-2" />
-              {preset.name}
-            </Button>
-          ))}
-        </div>
+      <main className="container mx-auto max-w-6xl py-6 lg:py-8">
+        <div className="grid items-start gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+          {/* Inputs */}
+          <Card className="order-2 gap-0 p-0 shadow-none lg:order-1">
+            <section className="space-y-4 p-4 sm:p-5">
+              <h2 className={sectionTitle}>You</h2>
+              <div className="grid grid-cols-2 gap-3">
+                <NumberField
+                  id="currentAge"
+                  label="Current age"
+                  value={inputs.currentAge}
+                  onChange={(v) => updateInput("currentAge", v)}
+                />
+                <NumberField
+                  id="retirementAge"
+                  label="Retirement age"
+                  value={inputs.retirementAge}
+                  onChange={(v) => updateInput("retirementAge", v)}
+                />
+              </div>
+              <NumberField
+                id="currentBalance"
+                label="Current investments"
+                money
+                value={inputs.currentBalance}
+                onChange={(v) => updateInput("currentBalance", v)}
+              />
+            </section>
 
-        {/* Main Content Grid */}
-        <div className="grid lg:grid-cols-3 gap-8">
-          {/* Input Panel */}
-          <div className="lg:col-span-1 space-y-6">
-            {/* Budget Card */}
-            <Card className="glass-panel p-6">
-              <h2 className="text-xl font-heading font-semibold text-white mb-4 flex items-center gap-2">
-                💰 Monthly Budget
-              </h2>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="monthlyIncome" className="text-white/90">
-                    Monthly Income ($)
+            <section className="space-y-4 border-t p-4 sm:p-5">
+              <h2 className={sectionTitle}>Monthly budget</h2>
+              <div className="grid grid-cols-2 gap-3">
+                <NumberField
+                  id="monthlyIncome"
+                  label="Income"
+                  money
+                  value={budget.monthlyIncome}
+                  onChange={(v) => setBudget((prev) => ({ ...prev, monthlyIncome: parseFloat(v) || 0 }))}
+                />
+                <NumberField
+                  id="budgetExpense"
+                  label="Expenses"
+                  money
+                  value={budget.monthlyExpense}
+                  onChange={(v) => setBudget((prev) => ({ ...prev, monthlyExpense: parseFloat(v) || 0 }))}
+                />
+              </div>
+              <div className="flex items-baseline justify-between rounded-md bg-muted px-3 py-2.5">
+                <span className="text-sm text-muted-foreground">Invested each month</span>
+                <span className="font-semibold tabular-nums">{formatCurrency(monthlyInvested)}</span>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t p-4 sm:p-5">
+              <h2 className={sectionTitle}>Assumptions</h2>
+
+              {isAuthenticated && savedScenarios.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="scenario-select" className="text-sm font-normal text-muted-foreground">
+                    Saved scenario
                   </Label>
-                  <Input
-                    id="monthlyIncome"
-                    type="number"
-                    value={budget.monthlyIncome}
-                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyIncome: parseFloat(e.target.value) || 0 }))}
-                    className="glass-input mt-1"
-                  />
-                  <input
-                    type="range"
-                    min="0"
-                    max="30000"
-                    step="100"
-                    value={budget.monthlyIncome}
-                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyIncome: parseFloat(e.target.value) }))}
-                    className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary mt-2"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="budgetExpense" className="text-white/90">
-                    Monthly Expenses ($)
-                  </Label>
-                  <Input
-                    id="budgetExpense"
-                    type="number"
-                    value={budget.monthlyExpense}
-                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyExpense: parseFloat(e.target.value) || 0 }))}
-                    className="glass-input mt-1"
-                  />
-                  <input
-                    type="range"
-                    min="0"
-                    max="20000"
-                    step="100"
-                    value={budget.monthlyExpense}
-                    onChange={(e) => setBudget((prev) => ({ ...prev, monthlyExpense: parseFloat(e.target.value) }))}
-                    className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500 mt-2"
-                  />
-                </div>
-
-                <div className="p-3 bg-white/5 rounded-lg border border-white/10">
-                  <div className="flex justify-between items-center">
-                    <span className="text-white/70 text-sm">Monthly Contribution</span>
-                    <span className="text-lg font-bold text-primary">
-                      {formatCurrency(calculatedContribution)}
-                    </span>
+                  <div className="flex gap-2">
+                    <Select value={selectedScenarioId} onValueChange={setSelectedScenarioId}>
+                      <SelectTrigger id="scenario-select" className="h-10 flex-1 bg-card shadow-none">
+                        <SelectValue placeholder="Select a scenario" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {savedScenarios.map((scenario) => (
+                          <SelectItem key={scenario.id} value={scenario.id.toString()}>
+                            {scenario.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedScenarioId && (
+                      <Button
+                        onClick={handleDeleteScenario}
+                        disabled={deleteScenarioMutation.isPending}
+                        variant="outline"
+                        size="icon"
+                        aria-label="Delete scenario"
+                        className="size-10 shadow-none"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
-                  <p className="text-white/50 text-xs mt-1">
-                    Income - Expenses = Savings
-                  </p>
                 </div>
+              )}
+
+              <div className="space-y-3">
+                <NumberField
+                  id="annualReturn"
+                  label="Expected annual return"
+                  suffix="%"
+                  step="0.1"
+                  value={inputs.annualReturn}
+                  onChange={(v) => updateInput("annualReturn", v)}
+                />
+                <Slider
+                  aria-label="Expected annual return"
+                  min={1}
+                  max={15}
+                  step={0.1}
+                  value={[inputs.annualReturn]}
+                  onValueChange={([v]) => setInputs((prev) => ({ ...prev, annualReturn: v }))}
+                />
+                <div className="grid grid-cols-3 rounded-md bg-muted p-1" role="group" aria-label="Return presets">
+                  {SCENARIO_PRESETS.map((preset) => (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      aria-pressed={activePreset === preset.name}
+                      className={cn(
+                        "cursor-pointer rounded-sm px-2 py-1.5 text-xs leading-4 font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+                        activePreset === preset.name && "bg-card text-foreground shadow-sm"
+                      )}
+                    >
+                      <span className="block">{preset.name}</span>
+                      <span className="block font-normal text-muted-foreground tabular-nums">{preset.annualReturn}%</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <NumberField
+                  id="inflationRate"
+                  label="Inflation"
+                  suffix="%"
+                  step="0.1"
+                  value={inputs.inflationRate}
+                  onChange={(v) => updateInput("inflationRate", v)}
+                />
+                <NumberField
+                  id="safeWithdrawalRate"
+                  label="Withdrawal rate"
+                  suffix="%"
+                  step="0.1"
+                  value={inputs.safeWithdrawalRate}
+                  onChange={(v) => updateInput("safeWithdrawalRate", v)}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="retirementStrategy" className="text-sm font-normal text-muted-foreground">
+                  Stop investing when
+                </Label>
+                <Select
+                  value={inputs.retirementStrategy}
+                  onValueChange={(value: RetirementStrategy) =>
+                    setInputs((prev) => ({ ...prev, retirementStrategy: value }))
+                  }
+                >
+                  <SelectTrigger id="retirementStrategy" className="h-10 w-full bg-card shadow-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="safe_fire">
+                      A {inputs.safeWithdrawalRate}% withdrawal covers expenses
+                    </SelectItem>
+                    <SelectItem value="income_crossover">
+                      Returns ({inputs.annualReturn}%) cover expenses
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {inputs.retirementStrategy === "safe_fire"
+                    ? "Conservative: the safe-withdrawal rule."
+                    : "Aggressive: less margin for bad markets."}
+                </p>
+              </div>
+            </section>
+
+            {isAuthenticated && (
+              <section className="space-y-3 border-t p-4 sm:p-5">
+                <div className="space-y-1.5">
+                  <Label htmlFor="scenarioName" className="text-sm font-normal text-muted-foreground">
+                    Scenario name
+                  </Label>
+                  <Input
+                    id="scenarioName"
+                    value={scenarioName}
+                    onChange={(e) => setScenarioName(e.target.value)}
+                    className="h-10 bg-card shadow-none"
+                  />
+                </div>
+                <Button
+                  onClick={handleSaveScenario}
+                  disabled={createScenarioMutation.isPending}
+                  className="w-full shadow-none"
+                >
+                  {createScenarioMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  Save scenario
+                </Button>
+              </section>
+            )}
+          </Card>
+
+          {/* Results */}
+          <div className="order-1 space-y-6 lg:sticky lg:top-6 lg:order-2">
+            <Card className="gap-0 p-4 shadow-none sm:p-6">
+              <h1 className="text-sm text-muted-foreground">Financial independence</h1>
+              {safeFIREPoint ? (
+                <>
+                  <div className="mt-1 flex flex-wrap items-baseline gap-x-3">
+                    <span className="text-5xl font-semibold tracking-tight tabular-nums">{safeFIREPoint.year}</span>
+                    <span className="text-xl text-muted-foreground">at age {safeFIREPoint.age}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {yearsToFire === 0
+                      ? `Already there: a ${inputs.safeWithdrawalRate}% withdrawal covers your expenses today.`
+                      : `In ${yearsToFire} ${yearsToFire === 1 ? "year" : "years"}, when a ${inputs.safeWithdrawalRate}% withdrawal covers your inflation-adjusted expenses.`}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-1 text-xl font-semibold tracking-tight">Not within 50 years</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Invest more each month, lower expenses, or revisit the return assumption.
+                  </p>
+                </>
+              )}
+
+              <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-5 border-t pt-5 xl:grid-cols-4">
+                <Stat
+                  label="FIRE number today"
+                  value={formatCurrency(projection[0].fireNumber)}
+                  detail={
+                    inputs.safeWithdrawalRate > 0
+                      ? `${+(100 / inputs.safeWithdrawalRate).toFixed(1)}× annual expenses`
+                      : undefined
+                  }
+                />
+                <Stat
+                  label="Portfolio at FI"
+                  value={safeFIREPoint ? formatCurrency(safeFIREPoint.balance) : "—"}
+                  detail={safeFIREPoint ? `in ${safeFIREPoint.year}` : undefined}
+                />
+                <Stat
+                  label="Savings rate"
+                  value={`${Math.round(savingsRate * 100)}%`}
+                  detail={`${formatCurrency(monthlyInvested)} a month`}
+                />
+                <Stat
+                  label="Income crossover"
+                  value={incomeCrossoverPoint ? String(incomeCrossoverPoint.year) : "—"}
+                  detail={incomeCrossoverPoint ? `age ${incomeCrossoverPoint.age}` : undefined}
+                />
               </div>
             </Card>
 
-            {/* Configuration Card */}
-            <Card className="glass-panel p-6">
-              <h2 className="text-xl font-heading font-semibold text-white mb-4 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                Configuration
-              </h2>
-
-              <div className="space-y-4">
-                {isAuthenticated && savedScenarios.length > 0 && (
-                  <div>
-                    <Label htmlFor="scenario-select" className="text-white/90">
-                      Load Saved Scenario
-                    </Label>
-                    <div className="flex gap-2 mt-1">
-                      <Select value={selectedScenarioId} onValueChange={setSelectedScenarioId}>
-                        <SelectTrigger className="glass-input">
-                          <SelectValue placeholder="Select a scenario..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {savedScenarios.map((scenario) => (
-                            <SelectItem key={scenario.id} value={scenario.id.toString()}>
-                              {scenario.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {selectedScenarioId && (
-                        <Button
-                          onClick={handleDeleteScenario}
-                          disabled={deleteScenarioMutation.isPending}
-                          variant="destructive"
-                          size="sm"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
+            <Card className="gap-0 p-4 shadow-none sm:p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <Label htmlFor="currentBalance" className="text-white/90">
-                    Current Investment Balance ($)
-                  </Label>
-                  <Input
-                    id="currentBalance"
-                    type="number"
-                    value={inputs.currentBalance}
-                    onChange={(e) => updateInput("currentBalance", e.target.value)}
-                    className="glass-input mt-1"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="annualReturn" className="text-white/90">
-                    Expected Annual Return (%)
-                  </Label>
-                  <div className="space-y-2">
-                    <Input
-                      id="annualReturn"
-                      type="number"
-                      step="0.1"
-                      value={inputs.annualReturn}
-                      onChange={(e) => updateInput("annualReturn", e.target.value)}
-                      className="glass-input mt-1"
-                    />
-                    <input
-                      type="range"
-                      min="1"
-                      max="15"
-                      step="0.1"
-                      value={inputs.annualReturn}
-                      onChange={(e) => updateInput("annualReturn", e.target.value)}
-                      className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary"
-                    />
-                    <p className="text-xs text-white/60">Drag to adjust: {inputs.annualReturn.toFixed(1)}%</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label htmlFor="currentAge" className="text-white/90">
-                      Current Age
-                    </Label>
-                    <Input
-                      id="currentAge"
-                      type="number"
-                      value={inputs.currentAge}
-                      onChange={(e) => updateInput("currentAge", e.target.value)}
-                      className="glass-input mt-1"
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="retirementAge" className="text-white/90">
-                      Retirement Age
-                    </Label>
-                    <Input
-                      id="retirementAge"
-                      type="number"
-                      value={inputs.retirementAge}
-                      onChange={(e) => updateInput("retirementAge", e.target.value)}
-                      className="glass-input mt-1"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label htmlFor="inflationRate" className="text-white/90">
-                      Inflation (%)
-                    </Label>
-                    <Input
-                      id="inflationRate"
-                      type="number"
-                      step="0.1"
-                      value={inputs.inflationRate}
-                      onChange={(e) => updateInput("inflationRate", e.target.value)}
-                      className="glass-input mt-1"
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="safeWithdrawalRate" className="text-white/90">
-                      SWR (%)
-                    </Label>
-                    <Input
-                      id="safeWithdrawalRate"
-                      type="number"
-                      step="0.1"
-                      value={inputs.safeWithdrawalRate}
-                      onChange={(e) => updateInput("safeWithdrawalRate", e.target.value)}
-                      className="glass-input mt-1"
-                    />
-                  </div>
-                </div>
-
-                {/* Retirement Strategy Selector */}
-                <div>
-                  <Label htmlFor="retirementStrategy" className="text-white/90 font-medium">
-                    Retirement Trigger
-                  </Label>
-                  <Select
-                    value={inputs.retirementStrategy}
-                    onValueChange={(value: RetirementStrategy) =>
-                      setInputs((prev) => ({ ...prev, retirementStrategy: value }))
-                    }
-                  >
-                    <SelectTrigger className="glass-input mt-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="safe_fire">
-                        🛡️ Safe FIRE ({inputs.safeWithdrawalRate}% rule)
-                      </SelectItem>
-                      <SelectItem value="income_crossover">
-                        ⚡ Income Crossover ({inputs.annualReturn}% returns)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-white/50 text-xs mt-1">
-                    {inputs.retirementStrategy === "safe_fire"
-                      ? "Conservative: Stop contributions when 4% withdrawal covers expenses"
-                      : "Aggressive: Stop contributions when investment returns exceed expenses"}
+                  <h2 className="text-base font-semibold">Projection</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {chartView === "portfolio"
+                      ? "Portfolio balance against the amount you need."
+                      : "Investment returns against yearly expenses, inflation-adjusted."}
                   </p>
                 </div>
+                <div className="flex items-center gap-2">
+                  <Tabs value={chartView} onValueChange={(v) => setChartView(v as typeof chartView)}>
+                    <TabsList>
+                      <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
+                      <TabsTrigger value="cashflow">Cash flow</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <Button onClick={handleExportCSV} variant="ghost" size="sm" aria-label="Export projection as CSV">
+                    <Download className="w-4 h-4" />
+                    CSV
+                  </Button>
+                </div>
+              </div>
 
-                <Button
-                  onClick={handleExportCSV}
-                  className="w-full glass-button"
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Export to CSV
-                </Button>
-
-                {isAuthenticated && (
+              <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
+                {chartView === "portfolio" ? (
                   <>
-                    <div>
-                      <Label htmlFor="scenarioName" className="text-white/90">
-                        Scenario Name
-                      </Label>
-                      <Input
-                        id="scenarioName"
-                        type="text"
-                        value={scenarioName}
-                        onChange={(e) => setScenarioName(e.target.value)}
-                        className="glass-input mt-1"
-                      />
-                    </div>
-
-                    <Button
-                      onClick={handleSaveScenario}
-                      disabled={createScenarioMutation.isPending}
-                      className="w-full glass-button"
-                    >
-                      {createScenarioMutation.isPending ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Save className="w-4 h-4 mr-2" />
-                          Save Scenario
-                        </>
-                      )}
-                    </Button>
+                    <LegendItem color="var(--chart-1)" label="Portfolio balance" />
+                    <LegendItem color="var(--chart-4)" label="FIRE number" dashed />
+                  </>
+                ) : (
+                  <>
+                    <LegendItem color="var(--chart-2)" label="Investment returns" />
+                    <LegendItem color="var(--chart-3)" label="Expenses" />
                   </>
                 )}
               </div>
-            </Card>
-          </div>
 
-          {/* Results Panel */}
-          <div className="lg:col-span-2 space-y-8">
-            {/* Milestones Card */}
-            {(incomeCrossoverPoint || safeFIREPoint) && (
-              <Card className="glass-panel p-8">
-                <h2 className="text-3xl font-heading font-bold text-white mb-6">
-                  🎯 Your FIRE Milestones
-                </h2>
-
-                {/* Two milestone cards side by side */}
-                <div className="grid md:grid-cols-2 gap-6">
-                  {/* Income Crossover - Aggressive */}
-                  {incomeCrossoverPoint && (
-                    <div className="p-6 bg-cyan-500/10 rounded-xl border border-cyan-500/30">
-                      <div className="flex items-center gap-2 mb-4">
-                        <span className="text-2xl">⚡</span>
-                        <h3 className="text-lg font-semibold text-cyan-400">Income Crossover</h3>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <p className="text-white/60 text-xs uppercase tracking-wide">Year</p>
-                          <p className="text-2xl font-bold text-cyan-400">{incomeCrossoverPoint.year}</p>
-                        </div>
-                        <div>
-                          <p className="text-white/60 text-xs uppercase tracking-wide">Age</p>
-                          <p className="text-2xl font-bold text-cyan-400">{incomeCrossoverPoint.age}</p>
-                        </div>
-                      </div>
-                      <div className="mb-3">
-                        <p className="text-white/60 text-xs uppercase tracking-wide">Portfolio Value</p>
-                        <p className="text-xl font-bold text-cyan-400">{formatCurrency(incomeCrossoverPoint.balance)}</p>
-                      </div>
-                      <p className="text-white/70 text-sm">
-                        Investment returns ({inputs.annualReturn}%) exceed expenses. You <em>could</em> stop working, but with less safety margin.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Safe FIRE - Conservative */}
-                  {safeFIREPoint && (
-                    <div className="p-6 bg-green-500/10 rounded-xl border border-green-500/30">
-                      <div className="flex items-center gap-2 mb-4">
-                        <span className="text-2xl">🛡️</span>
-                        <h3 className="text-lg font-semibold text-green-400">Safe FIRE</h3>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <p className="text-white/60 text-xs uppercase tracking-wide">Year</p>
-                          <p className="text-2xl font-bold text-green-400">{safeFIREPoint.year}</p>
-                        </div>
-                        <div>
-                          <p className="text-white/60 text-xs uppercase tracking-wide">Age</p>
-                          <p className="text-2xl font-bold text-green-400">{safeFIREPoint.age}</p>
-                        </div>
-                      </div>
-                      <div className="mb-3">
-                        <p className="text-white/60 text-xs uppercase tracking-wide">Portfolio Value</p>
-                        <p className="text-xl font-bold text-green-400">{formatCurrency(safeFIREPoint.balance)}</p>
-                      </div>
-                      <p className="text-white/70 text-sm">
-                        Safe withdrawal ({inputs.safeWithdrawalRate}% rule) covers expenses. Sustainable for 30+ years even in bad markets.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Summary message */}
-                {incomeCrossoverPoint && safeFIREPoint && incomeCrossoverPoint.year !== safeFIREPoint.year && (
-                  <div className="mt-6 p-4 bg-white/5 rounded-lg border border-white/10">
-                    <p className="text-white/80 text-center">
-                      You can potentially retire in <span className="font-bold text-cyan-400">{incomeCrossoverPoint.year}</span> (age {incomeCrossoverPoint.age}),
-                      or wait until <span className="font-bold text-green-400">{safeFIREPoint.year}</span> (age {safeFIREPoint.age}) for maximum safety.
-                      That's a <span className="font-bold text-primary">{safeFIREPoint.year - incomeCrossoverPoint.year} year</span> window.
-                    </p>
-                  </div>
-                )}
-              </Card>
-            )}
-
-            {/* Chart Card */}
-            <Card className="glass-panel p-8">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-                <h2 className="text-2xl font-heading font-semibold text-white">
-                  Projection Over Time
-                </h2>
-                
-                {/* Chart Line Toggles */}
-                <div className="flex flex-wrap gap-4">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="toggle-balance"
-                      checked={chartLineVisibility.balance}
-                      onCheckedChange={() => toggleLineVisibility("balance")}
-                      className="border-white/30"
-                    />
-                    <label
-                      htmlFor="toggle-balance"
-                      className="text-sm text-white/90 cursor-pointer flex items-center gap-2"
-                    >
-                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: "#8b5cf6" }}></span>
-                      Balance
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="toggle-expenses"
-                      checked={chartLineVisibility.expenses}
-                      onCheckedChange={() => toggleLineVisibility("expenses")}
-                      className="border-white/30"
-                    />
-                    <label
-                      htmlFor="toggle-expenses"
-                      className="text-sm text-white/90 cursor-pointer flex items-center gap-2"
-                    >
-                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: "#ec4899" }}></span>
-                      Expenses
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="toggle-income"
-                      checked={chartLineVisibility.income}
-                      onCheckedChange={() => toggleLineVisibility("income")}
-                      className="border-white/30"
-                    />
-                    <label
-                      htmlFor="toggle-income"
-                      className="text-sm text-white/90 cursor-pointer flex items-center gap-2"
-                    >
-                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: "#06b6d4" }}></span>
-                      Income
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-white/70 text-sm mb-4">
-                Monthly contributions stop once FIRE is achieved. The chart shows your portfolio growth after contributions cease.
-              </p>
-              <div className="h-[500px] w-full overflow-x-auto">
-                <ResponsiveContainer width={1200} height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                    <XAxis
-                      dataKey="year"
-                      stroke="rgba(255,255,255,0.7)"
-                      style={{ fontSize: "12px" }}
-                      interval={0}
-                      tick={{ fontSize: 10 }}
-                      angle={-45}
-                      textAnchor="end"
-                      height={60}
-                    />
-                    <YAxis
-                      stroke="rgba(255,255,255,0.7)"
-                      style={{ fontSize: "12px" }}
-                      tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                    />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: "rgba(0, 0, 0, 0.8)",
-                        border: "1px solid rgba(255, 255, 255, 0.2)",
-                        borderRadius: "8px",
-                        color: "#fff",
-                      }}
-                      formatter={(value: number) => formatCurrency(value)}
-                    />
-                    <Legend
-                      wrapperStyle={{ color: "#fff" }}
-                      iconType="line"
-                    />
-                    {/* Income Crossover line (cyan) */}
-                    {incomeCrossoverPoint && (
-                      <ReferenceLine
-                        x={incomeCrossoverPoint.year}
-                        stroke="#22d3ee"
-                        strokeDasharray="5 5"
-                        label={{
-                          value: "Income Crossover",
-                          fill: "#22d3ee",
-                          fontSize: 11,
-                          position: "top",
-                        }}
-                      />
-                    )}
-                    {/* Safe FIRE line (green) */}
-                    {safeFIREPoint && safeFIREPoint.year !== incomeCrossoverPoint?.year && (
-                      <ReferenceLine
-                        x={safeFIREPoint.year}
-                        stroke="#22c55e"
-                        strokeDasharray="5 5"
-                        label={{
-                          value: "Safe FIRE",
-                          fill: "#22c55e",
-                          fontSize: 11,
-                          position: "insideTopRight",
-                        }}
-                      />
-                    )}
-                    {chartLineVisibility.balance && (
-                      <Line
+              <div className="mt-2 h-[280px] w-full sm:h-[340px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  {chartView === "portfolio" ? (
+                    <ComposedChart data={chartData} margin={{ top: 24, right: 20, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--border)" />
+                      {xAxis}
+                      {yAxis}
+                      {tooltip}
+                      {safeFIREPoint && (
+                        <ReferenceLine
+                          x={safeFIREPoint.year}
+                          stroke="var(--muted-foreground)"
+                          strokeDasharray="2 3"
+                          label={{ value: `FI ${safeFIREPoint.year}`, position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                        />
+                      )}
+                      <Area
                         type="monotone"
                         dataKey="Investment Balance"
-                        stroke="#8b5cf6"
-                        strokeWidth={3}
-                        dot={false}
-                        activeDot={{ r: 6 }}
+                        name="Portfolio balance"
+                        stroke="var(--chart-1)"
+                        strokeWidth={2}
+                        fill="var(--chart-1)"
+                        fillOpacity={0.08}
+                        activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
                       />
-                    )}
-                    {chartLineVisibility.expenses && (
                       <Line
                         type="monotone"
-                        dataKey="Annual Expenses"
-                        stroke="#ec4899"
-                        strokeWidth={3}
+                        dataKey="FIRE Number"
+                        name="FIRE number"
+                        stroke="var(--chart-4)"
+                        strokeWidth={1.5}
+                        strokeDasharray="4 4"
                         dot={false}
-                        activeDot={{ r: 6 }}
+                        activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
                       />
-                    )}
-                    {chartLineVisibility.income && (
+                    </ComposedChart>
+                  ) : (
+                    <LineChart data={chartData} margin={{ top: 24, right: 20, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--border)" />
+                      {xAxis}
+                      {yAxis}
+                      {tooltip}
+                      {incomeCrossoverPoint && (
+                        <ReferenceLine
+                          x={incomeCrossoverPoint.year}
+                          stroke="var(--muted-foreground)"
+                          strokeDasharray="2 3"
+                          label={{ value: `Crossover ${incomeCrossoverPoint.year}`, position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                        />
+                      )}
                       <Line
                         type="monotone"
                         dataKey="Investment Income"
-                        stroke="#06b6d4"
-                        strokeWidth={3}
+                        name="Investment returns"
+                        stroke="var(--chart-2)"
+                        strokeWidth={2}
                         dot={false}
-                        activeDot={{ r: 6 }}
+                        activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
                       />
-                    )}
-                  </LineChart>
+                      <Line
+                        type="monotone"
+                        dataKey="Annual Expenses"
+                        name="Expenses"
+                        stroke="var(--chart-3)"
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
+                      />
+                    </LineChart>
+                  )}
                 </ResponsiveContainer>
               </div>
+
+              <p className="mt-4 text-xs text-muted-foreground">
+                After you reach FI, contributions stop and yearly expenses come out of the portfolio.
+              </p>
             </Card>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
