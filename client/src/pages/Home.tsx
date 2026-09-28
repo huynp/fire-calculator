@@ -2,6 +2,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { HelpDialog } from "@/components/HelpDialog";
+import { Switch } from "@/components/ui/switch";
+import { planFromSearch, planToSearch } from "@/lib/plan-url";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,7 +39,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from "recharts";
-import { Loader2, Save, Download, Trash2, TrendingUp } from "lucide-react";
+import { Loader2, Save, Download, Trash2, TrendingUp, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface BudgetInputs {
@@ -219,25 +221,46 @@ export default function Home() {
   const isMobile = useIsMobile();
 
   // Budget inputs (for calculating monthly contribution)
+  // Start from the plan in the URL (shared link or bookmark), else the defaults.
+  const [initialPlan] = useState(() => planFromSearch(window.location.search));
+  const [futureDollars, setFutureDollars] = useState(initialPlan.futureDollars);
+
   const [budget, setBudget] = useState<BudgetInputs>({
-    monthlyIncome: 4000,
-    monthlyExpense: 3000,
+    monthlyIncome: initialPlan.monthlyIncome,
+    monthlyExpense: initialPlan.monthlyExpense,
   });
 
   // Auto-calculate monthly contribution from budget
   const calculatedContribution = Math.max(0, budget.monthlyIncome - budget.monthlyExpense);
 
   const [inputs, setInputs] = useState<FireInputs>({
-    currentBalance: 500000,
-    annualReturn: 7,
-    monthlyContribution: 1000,
-    monthlyExpense: 3000,
-    currentAge: 36,
-    retirementAge: 65,
-    inflationRate: 3,
-    safeWithdrawalRate: 4,
-    retirementStrategy: "safe_fire",
+    currentBalance: initialPlan.currentBalance,
+    annualReturn: initialPlan.annualReturn,
+    monthlyContribution: calculatedContribution,
+    monthlyExpense: initialPlan.monthlyExpense,
+    currentAge: initialPlan.currentAge,
+    retirementAge: initialPlan.retirementAge,
+    inflationRate: initialPlan.inflationRate,
+    safeWithdrawalRate: initialPlan.safeWithdrawalRate,
+    retirementStrategy: initialPlan.retirementStrategy,
   });
+
+  // Keep the URL in step with the plan so the address bar is always a shareable link.
+  useEffect(() => {
+    const search = planToSearch({
+      currentAge: inputs.currentAge,
+      retirementAge: inputs.retirementAge,
+      currentBalance: inputs.currentBalance,
+      monthlyIncome: budget.monthlyIncome,
+      monthlyExpense: budget.monthlyExpense,
+      annualReturn: inputs.annualReturn,
+      inflationRate: inputs.inflationRate,
+      safeWithdrawalRate: inputs.safeWithdrawalRate,
+      retirementStrategy: inputs.retirementStrategy,
+      futureDollars,
+    });
+    window.history.replaceState(null, "", window.location.pathname + search);
+  }, [inputs, budget, futureDollars]);
 
   // Sync monthly contribution and expense from budget
   useEffect(() => {
@@ -295,15 +318,17 @@ export default function Home() {
     return projection.find((p) => p.isFireAchieved);
   }, [projection]);
 
-  const chartData = useMemo(() => {
-    return projection.map((p) => ({
-      year: p.year,
-      "Investment Balance": p.balance,
-      "Annual Expenses": p.annualExpense,
-      "Investment Income": p.investmentIncome,
-      "FIRE Number": p.fireNumber,
-    }));
-  }, [projection]);
+  // Today's dollars remove inflation: year N amounts are divided by (1 + inflation)^N.
+  const toDisplay = (value: number, yearIndex: number) =>
+    futureDollars ? value : value / Math.pow(1 + inputs.inflationRate / 100, yearIndex);
+
+  const chartData = projection.map((p, i) => ({
+    year: p.year,
+    "Investment Balance": Math.round(toDisplay(p.balance, i)),
+    "Annual Expenses": Math.round(toDisplay(p.annualExpense, i)),
+    "Investment Income": Math.round(toDisplay(p.investmentIncome, i)),
+    "FIRE Number": Math.round(toDisplay(p.fireNumber, i)),
+  }));
 
   const createScenarioMutation = trpc.fireScenarios.create.useMutation({
     onSuccess: () => {
@@ -365,6 +390,15 @@ export default function Home() {
     setSelectedScenarioId("");
   };
 
+  const handleShare = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      toast.success("Link copied. It opens this plan with your numbers.");
+    } catch {
+      toast.error("Couldn't copy. Copy the link from the address bar instead.");
+    }
+  };
+
   const handleExportCSV = () => {
     exportToCSV(projection, inputs, budget);
     toast.success("Projection exported to CSV");
@@ -380,7 +414,14 @@ export default function Home() {
 
   const monthlyInvested = inputs.monthlyContribution;
   const savingsRate = budget.monthlyIncome > 0 ? monthlyInvested / budget.monthlyIncome : 0;
-  const yearsToFire = safeFIREPoint ? safeFIREPoint.year - projection[0].year : null;
+  // The headline follows the chosen "stop investing" rule; the other milestone is shown alongside.
+  const isCrossover = inputs.retirementStrategy === "income_crossover";
+  const fiPoint = isCrossover ? incomeCrossoverPoint : safeFIREPoint;
+  const otherPoint = isCrossover ? safeFIREPoint : incomeCrossoverPoint;
+  const yearsToFire = fiPoint ? fiPoint.year - projection[0].year : null;
+  const fiReason = isCrossover
+    ? `investment returns (${inputs.annualReturn}%) cover your inflation-adjusted expenses`
+    : `a ${inputs.safeWithdrawalRate}% withdrawal covers your inflation-adjusted expenses`;
   const activePreset = SCENARIO_PRESETS.find((p) => p.annualReturn === inputs.annualReturn)?.name;
   const tickEvery = isMobile ? 10 : 5;
   const xTicks = chartData.filter((_, i) => i % tickEvery === 0).map((d) => d.year);
@@ -430,6 +471,10 @@ export default function Home() {
                 <a href={getLoginUrl()}>Log in</a>
               </Button>
             )}
+            <Button variant="ghost" size="sm" onClick={handleShare}>
+              <Link2 className="w-4 h-4" />
+              Share
+            </Button>
             <HelpDialog />
           </div>
         </div>
@@ -643,16 +688,16 @@ export default function Home() {
           <div className="order-1 space-y-6 lg:sticky lg:top-6 lg:order-2">
             <Card className="gap-0 p-4 shadow-none sm:p-6">
               <h1 className="text-sm text-muted-foreground">Financial independence</h1>
-              {safeFIREPoint ? (
+              {fiPoint ? (
                 <>
                   <div className="mt-1 flex flex-wrap items-baseline gap-x-3">
-                    <span className="text-5xl font-semibold tracking-tight tabular-nums">{safeFIREPoint.year}</span>
-                    <span className="text-xl text-muted-foreground">at age {safeFIREPoint.age}</span>
+                    <span className="text-5xl font-semibold tracking-tight tabular-nums">{fiPoint.year}</span>
+                    <span className="text-xl text-muted-foreground">at age {fiPoint.age}</span>
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">
                     {yearsToFire === 0
-                      ? `Already there: a ${inputs.safeWithdrawalRate}% withdrawal covers your expenses today.`
-                      : `In ${yearsToFire} ${yearsToFire === 1 ? "year" : "years"}, when a ${inputs.safeWithdrawalRate}% withdrawal covers your inflation-adjusted expenses.`}
+                      ? `Already there: ${fiReason} today.`
+                      : `In ${yearsToFire} ${yearsToFire === 1 ? "year" : "years"}, when ${fiReason}.`}
                   </p>
                 </>
               ) : (
@@ -676,8 +721,12 @@ export default function Home() {
                 />
                 <Stat
                   label="Portfolio at FI"
-                  value={safeFIREPoint ? formatCurrency(safeFIREPoint.balance) : "—"}
-                  detail={safeFIREPoint ? `in ${safeFIREPoint.year}` : undefined}
+                  value={
+                    fiPoint
+                      ? formatCurrency(toDisplay(fiPoint.balance, fiPoint.year - projection[0].year))
+                      : "—"
+                  }
+                  detail={fiPoint ? `in ${fiPoint.year}${futureDollars ? "" : ", today's dollars"}` : undefined}
                 />
                 <Stat
                   label="Savings rate"
@@ -685,9 +734,9 @@ export default function Home() {
                   detail={`${formatCurrency(monthlyInvested)} a month`}
                 />
                 <Stat
-                  label="Income crossover"
-                  value={incomeCrossoverPoint ? String(incomeCrossoverPoint.year) : "—"}
-                  detail={incomeCrossoverPoint ? `age ${incomeCrossoverPoint.age}` : undefined}
+                  label={isCrossover ? `${inputs.safeWithdrawalRate}% rule reached` : "Income crossover"}
+                  value={otherPoint ? String(otherPoint.year) : "—"}
+                  detail={otherPoint ? `age ${otherPoint.age}` : isCrossover ? "not after you stop investing" : undefined}
                 />
               </div>
             </Card>
@@ -699,7 +748,8 @@ export default function Home() {
                   <p className="text-sm text-muted-foreground">
                     {chartView === "portfolio"
                       ? "Portfolio balance against the amount you need."
-                      : "Investment returns against yearly expenses, inflation-adjusted."}
+                      : "Investment returns against yearly expenses."}{" "}
+                    {futureDollars ? "Future dollars." : "In today's dollars."}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -716,7 +766,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
+              <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
                 {chartView === "portfolio" ? (
                   <>
                     <LegendItem color="var(--chart-1)" label="Portfolio balance" />
@@ -728,6 +778,10 @@ export default function Home() {
                     <LegendItem color="var(--chart-3)" label="Expenses" />
                   </>
                 )}
+                <label className="ml-auto flex cursor-pointer items-center gap-2">
+                  <Switch checked={futureDollars} onCheckedChange={setFutureDollars} />
+                  Future dollars
+                </label>
               </div>
 
               <div className="mt-2 h-[280px] w-full sm:h-[340px]">
@@ -738,12 +792,12 @@ export default function Home() {
                       {xAxis}
                       {yAxis}
                       {tooltip}
-                      {safeFIREPoint && (
+                      {fiPoint && (
                         <ReferenceLine
-                          x={safeFIREPoint.year}
+                          x={fiPoint.year}
                           stroke="var(--muted-foreground)"
                           strokeDasharray="2 3"
-                          label={{ value: `FI ${safeFIREPoint.year}`, position: "top", fill: "var(--foreground)", fontSize: 12 }}
+                          label={{ value: `FI ${fiPoint.year}`, position: "top", fill: "var(--foreground)", fontSize: 12 }}
                         />
                       )}
                       <Area

@@ -71,7 +71,19 @@ export function HelpDialog() {
             where they cross is your FI year. <span className="text-foreground">Cash flow</span> compares
             yearly returns with yearly expenses.
           </p>
+          <p>
+            Amounts are in <span className="text-foreground">today's dollars</span>, so they're comparable to
+            prices now. Turn on <span className="text-foreground">Future dollars</span> to see the inflated
+            figures.
+          </p>
           <p>Hover the chart for any year's figures, or download every year with CSV.</p>
+        </Section>
+
+        <Section title="4. Save or share">
+          <p>
+            The page address always holds your numbers. Bookmark it, or use{" "}
+            <span className="text-foreground">Share</span> to copy the link and send it to someone.
+          </p>
         </Section>
 
         <Section title="How the projection works">
