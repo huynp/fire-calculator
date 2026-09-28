@@ -13,6 +13,7 @@ export function NumberField({
   suffix,
   step,
   srOnlyLabel,
+  describedBy,
 }: {
   id: string;
   label: string;
@@ -24,6 +25,8 @@ export function NumberField({
   step?: string;
   /** Keep the label for screen readers only, when a visible heading already names the field */
   srOnlyLabel?: boolean;
+  /** Id of a hint that explains the field */
+  describedBy?: string;
 }) {
   return (
     <div className="space-y-1.5">
@@ -41,6 +44,7 @@ export function NumberField({
           type={money ? "text" : "number"}
           inputMode={money ? "numeric" : "decimal"}
           step={step}
+          aria-describedby={describedBy}
           value={money ? value.toLocaleString(money.locale) : value}
           // Money is whole units, so keep digits only: "." and "," are thousands separators in some locales.
           onChange={(e) => onChange(money ? e.target.value.replace(/\D/g, "") : e.target.value)}

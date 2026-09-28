@@ -401,4 +401,10 @@ describe("Assets and other income", () => {
     const p = calculateFireProjection({ ...base, currentBalance: 0, monthlyContribution: 0, monthlyExpense: 0 });
     p.forEach((y) => expect(Number.isNaN(y.balance)).toBe(false));
   });
+
+  it("reports the yearly need (expenses not covered by other income) the FI tests use", () => {
+    const p = calculateFireProjection({ ...base, otherIncome: [{ kind: "rent", monthly: 1200, fromAge: 36 }] });
+    expect(p[0].need).toBe(36000 - 14400);
+    expect(calculateFireProjection(base)[0].need).toBe(36000);
+  });
 });

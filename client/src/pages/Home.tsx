@@ -340,7 +340,8 @@ export default function Home() {
   const chartData = projection.map((p, i) => ({
     year: p.year,
     balance: Math.round(toDisplay(p.balance, i)),
-    expenses: Math.round(toDisplay(p.annualExpense, i)),
+    // With other income, plot what the portfolio must cover, so the crossover marker matches the lines.
+    expenses: Math.round(toDisplay(otherIncome.length > 0 ? p.need : p.annualExpense, i)),
     returns: Math.round(toDisplay(p.investmentIncome, i)),
     fireNumber: Math.round(toDisplay(p.fireNumber, i)),
     otherIncome: Math.round(toDisplay(p.otherIncome, i)),
@@ -765,17 +766,17 @@ export default function Home() {
                   <p className="mt-2 text-sm text-muted-foreground">
                     {yearsToFire === 0 ? t.alreadyThere(fiReason) : t.inYears(yearsToFire ?? 0, fiReason)}
                   </p>
-                  {assets.some((a) => a.kind === "property") && (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {t.netWorthLine(formatMoney(projection[0].netWorth))}
-                    </p>
-                  )}
                 </>
               ) : (
                 <>
                   <p className="mt-1 text-xl font-semibold tracking-tight">{t.notWithin50}</p>
                   <p className="mt-2 text-sm text-muted-foreground">{t.notWithin50Hint}</p>
                 </>
+              )}
+              {assets.some((a) => a.kind === "property") && (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t.netWorthLine(formatMoney(projection[0].netWorth))}
+                </p>
               )}
 
               <div className="mt-6 grid grid-cols-2 gap-x-4 gap-y-5 border-t pt-5 xl:grid-cols-4">
@@ -838,7 +839,7 @@ export default function Home() {
                 ) : (
                   <>
                     <LegendItem color="var(--chart-2)" label={t.investmentReturns} />
-                    <LegendItem color="var(--chart-3)" label={t.expenses} />
+                    <LegendItem color="var(--chart-3)" label={otherIncome.length > 0 ? t.expensesAfterIncome : t.expenses} />
                     {otherIncome.length > 0 && <LegendItem color={OTHER_INCOME_COLOR} label={t.otherIncomeSeries} />}
                   </>
                 )}
@@ -927,7 +928,7 @@ export default function Home() {
                       <Line
                         type="monotone"
                         dataKey="expenses"
-                        name={t.expenses}
+                        name={otherIncome.length > 0 ? t.expensesAfterIncome : t.expenses}
                         stroke="var(--chart-3)"
                         strokeWidth={2}
                         dot={false}

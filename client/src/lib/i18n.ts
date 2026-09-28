@@ -184,6 +184,7 @@ const en = {
   takeHomePay: "Take-home pay",
   netWorthLine: (amount: string) => `Net worth ${amount}, including property.`,
   otherIncomeSeries: "Other income",
+  expensesAfterIncome: "Expenses not covered by other income",
 
   assumptions: "Assumptions",
   savedScenario: "Saved scenario",
@@ -323,6 +324,7 @@ const vi: Messages = {
   takeHomePay: "Lương thực nhận",
   netWorthLine: (amount) => `Tài sản ròng ${amount}, gồm cả bất động sản.`,
   otherIncomeSeries: "Thu nhập khác",
+  expensesAfterIncome: "Chi tiêu chưa được thu nhập khác bù",
 
   assumptions: "Giả định",
   savedScenario: "Kịch bản đã lưu",

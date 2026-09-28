@@ -43,6 +43,7 @@ export interface YearlyData {
   isIncomeCrossover: boolean; // Income > Expenses
   otherIncome: number; // yearly, inflation-adjusted
   netWorth: number; // investable money plus property
+  need: number; // expenses not covered by other income: what the portfolio must pay
 }
 
 export const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
@@ -113,6 +114,7 @@ export const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
       isIncomeCrossover,
       otherIncome: Math.round(income),
       netWorth: Math.round(investable + property * inflation),
+      need: Math.round(need),
     });
 
     // Next year: growth, then savings in or spending out.
