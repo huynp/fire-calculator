@@ -36,4 +36,31 @@ describe("plan in the URL", () => {
     expect(planFromSearch("", base)).toEqual(base);
     expect(planFromSearch("?lang=en&cur=USD", base)).toEqual(DEFAULT_PLAN);
   });
+
+  it("round-trips assets and other income", () => {
+    const plan = {
+      ...DEFAULT_PLAN,
+      assets: [
+        { kind: "savings" as const, amount: 20000, rate: 4.5 },
+        { kind: "property" as const, amount: 800000 },
+      ],
+      otherIncome: [{ kind: "rent" as const, monthly: 1200, fromAge: 36 }],
+    };
+    expect(planToSearch(plan)).toBe("?asset=savings%3A20000%3A4.5&asset=property%3A800000&income=rent%3A1200%3A36");
+    expect(planFromSearch(planToSearch(plan))).toEqual(plan);
+  });
+
+  it("drops unknown or broken rows, defaults a missing deposit rate, and caps at 10", () => {
+    const plan = planFromSearch("?asset=boat:5000&asset=savings:abc&asset=savings:20000&income=rent:-5:40&income=pension:1500");
+    expect(plan.assets).toEqual([{ kind: "savings", amount: 20000, rate: 4 }]);
+    expect(plan.otherIncome).toEqual([]);
+    const many = "?" + Array.from({ length: 12 }, () => "asset=property:1").join("&");
+    expect(planFromSearch(many).assets).toHaveLength(10);
+  });
+
+  it("old links without lists open with empty lists", () => {
+    const plan = planFromSearch("?invested=100");
+    expect(plan.assets).toEqual([]);
+    expect(plan.otherIncome).toEqual([]);
+  });
 });

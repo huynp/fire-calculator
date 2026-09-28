@@ -1,4 +1,4 @@
-import type { RetirementStrategy } from "./fire-calc";
+import type { AssetKind, ExtraAsset, IncomeKind, OtherIncome, RetirementStrategy } from "./fire-calc";
 import type { Lang } from "./i18n";
 
 // A plan lives in the page URL so it can be bookmarked or shared; no account needed.
@@ -19,6 +19,8 @@ export interface Plan {
   futureDollars: boolean;
   lang: Lang;
   currency: Currency;
+  assets: ExtraAsset[];
+  otherIncome: OtherIncome[];
 }
 
 export const DEFAULT_PLAN: Plan = {
@@ -34,6 +36,8 @@ export const DEFAULT_PLAN: Plan = {
   futureDollars: false,
   lang: "en",
   currency: "USD",
+  assets: [],
+  otherIncome: [],
 };
 
 type AmountKey = "currentBalance" | "monthlyIncome" | "monthlyExpense";
@@ -57,7 +61,7 @@ export const defaultsFor = (currency: Currency, lang: Lang): Plan => ({
   lang,
 });
 
-type NumberKey = Exclude<keyof Plan, "retirementStrategy" | "futureDollars" | "lang" | "currency">;
+type NumberKey = Exclude<keyof Plan, "retirementStrategy" | "futureDollars" | "lang" | "currency" | "assets" | "otherIncome">;
 
 // URL name and accepted range for each number; anything outside falls back to the default.
 const NUMBERS: Record<NumberKey, [param: string, min: number, max: number]> = {
@@ -70,6 +74,34 @@ const NUMBERS: Record<NumberKey, [param: string, min: number, max: number]> = {
   inflationRate: ["inflation", -5, 25],
   safeWithdrawalRate: ["withdraw", 0.1, 20],
 };
+
+export const MAX_ROWS = 10;
+const ASSET_KINDS: AssetKind[] = ["investments", "savings", "property"];
+const INCOME_KINDS: IncomeKind[] = ["rent", "pension", "side", "other"];
+
+const inRange = (raw: string | undefined, min: number, max: number) => {
+  const value = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(value) && value >= min && value <= max ? value : undefined;
+};
+
+// "kind:amount[:rate]", e.g. "savings:20000:4"; rate applies to savings and defaults to 4%.
+function parseAsset(raw: string): ExtraAsset | undefined {
+  const [kind, amountRaw, rateRaw] = raw.split(":");
+  const found = ASSET_KINDS.find((k) => k === kind);
+  const amount = inRange(amountRaw, 0, 1e13);
+  if (!found || amount === undefined) return undefined;
+  return found === "savings" ? { kind: found, amount, rate: inRange(rateRaw, -5, 30) ?? 4 } : { kind: found, amount };
+}
+
+// "kind:monthly:fromAge", e.g. "rent:1200:36".
+function parseIncome(raw: string): OtherIncome | undefined {
+  const [kind, monthlyRaw, fromAgeRaw] = raw.split(":");
+  const found = INCOME_KINDS.find((k) => k === kind);
+  const monthly = inRange(monthlyRaw, 0, 1e11);
+  const fromAge = inRange(fromAgeRaw, 0, 120);
+  if (!found || monthly === undefined || fromAge === undefined) return undefined;
+  return { kind: found, monthly, fromAge };
+}
 
 const STRATEGIES: Record<string, RetirementStrategy> = { safe: "safe_fire", crossover: "income_crossover" };
 const LANGS: Lang[] = ["en", "vi"];
@@ -90,6 +122,10 @@ export function planFromSearch(search: string, base: Plan = DEFAULT_PLAN): Plan 
   plan.retirementStrategy = STRATEGIES[params.get("stop") ?? ""] ?? plan.retirementStrategy;
   const dollars = params.get("dollars");
   if (dollars === "future" || dollars === "today") plan.futureDollars = dollars === "future";
+  const assets = params.getAll("asset").map(parseAsset).filter((a): a is ExtraAsset => !!a);
+  const incomes = params.getAll("income").map(parseIncome).filter((o): o is OtherIncome => !!o);
+  plan.assets = assets.length || params.has("asset") ? assets.slice(0, MAX_ROWS) : base.assets;
+  plan.otherIncome = incomes.length || params.has("income") ? incomes.slice(0, MAX_ROWS) : base.otherIncome;
   return plan;
 }
 
@@ -105,6 +141,10 @@ export function planToSearch(plan: Plan): string {
     params.set("stop", plan.retirementStrategy === "income_crossover" ? "crossover" : "safe");
   }
   if (plan.futureDollars) params.set("dollars", "future");
+  plan.assets.forEach((a) =>
+    params.append("asset", [a.kind, a.amount, ...(a.kind === "savings" ? [a.rate ?? 4] : [])].join(":"))
+  );
+  plan.otherIncome.forEach((o) => params.append("income", [o.kind, o.monthly, o.fromAge].join(":")));
   const query = params.toString();
   return query ? `?${query}` : "";
 }

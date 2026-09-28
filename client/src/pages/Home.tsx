@@ -292,6 +292,8 @@ export default function Home() {
       futureDollars,
       lang,
       currency,
+      assets: initialPlan.assets,
+      otherIncome: initialPlan.otherIncome,
     });
     window.history.replaceState(null, "", window.location.pathname + search);
   }, [inputs, budget, futureDollars, lang, currency]);
