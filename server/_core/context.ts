@@ -18,15 +18,18 @@ export async function createContext(
 
   if (!isOAuthConfigured && process.env.NODE_ENV === "development") {
     // Mock user for development
+    const now = new Date();
     user = {
-      id: "dev-user-id",
+      id: 0,
       openId: "dev-open-id",
       name: "Dev User",
       email: "dev@localhost",
       loginMethod: "dev",
-      createdAt: new Date(),
-      lastSignedIn: new Date(),
-    } as User;
+      role: "user",
+      createdAt: now,
+      updatedAt: now,
+      lastSignedIn: now,
+    };
   } else {
     try {
       user = await sdk.authenticateRequest(opts.req);

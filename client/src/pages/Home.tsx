@@ -15,6 +15,13 @@ import {
 } from "@/components/ui/select";
 import { getLoginUrl } from "@/const";
 import { cn } from "@/lib/utils";
+import {
+  calculateFireProjection,
+  formatCurrency,
+  type FireInputs,
+  type RetirementStrategy,
+  type YearlyData,
+} from "@/lib/fire-calc";
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useEffect } from "react";
 import {
@@ -32,36 +39,9 @@ import {
 import { Loader2, Save, Download, Trash2, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
-type RetirementStrategy = "income_crossover" | "safe_fire";
-
 interface BudgetInputs {
   monthlyIncome: number;
   monthlyExpense: number;
-}
-
-interface FireInputs {
-  currentBalance: number;
-  annualReturn: number;
-  monthlyContribution: number;
-  monthlyExpense: number;
-  currentAge: number;
-  retirementAge: number;
-  inflationRate: number;
-  safeWithdrawalRate: number;
-  retirementStrategy: RetirementStrategy;
-}
-
-interface YearlyData {
-  age: number;
-  year: number;
-  balance: number;
-  annualContribution: number;
-  annualExpense: number;
-  investmentIncome: number;
-  safeWithdrawalAmount: number;
-  fireNumber: number;
-  isFireAchieved: boolean; // Safe FIRE (4% rule)
-  isIncomeCrossover: boolean; // Income > Expenses
 }
 
 interface ScenarioPreset {
@@ -74,84 +54,6 @@ const SCENARIO_PRESETS: ScenarioPreset[] = [
   { name: "Moderate", annualReturn: 7 },
   { name: "Aggressive", annualReturn: 10 },
 ];
-
-const calculateFireProjection = (inputs: FireInputs): YearlyData[] => {
-  const {
-    currentBalance,
-    annualReturn,
-    monthlyContribution,
-    monthlyExpense,
-    currentAge,
-    retirementAge,
-    inflationRate,
-    safeWithdrawalRate,
-    retirementStrategy,
-  } = inputs;
-
-  const projection: YearlyData[] = [];
-  let balance = currentBalance;
-  let annualExpense = monthlyExpense * 12;
-  const currentYear = new Date().getFullYear();
-  const yearsToProject = 50;
-
-  for (let i = 0; i <= yearsToProject; i++) {
-    const age = currentAge + i;
-    const year = currentYear + i;
-
-    const adjustedAnnualExpense = annualExpense * Math.pow(1 + inflationRate / 100, i);
-    const fireNumber = adjustedAnnualExpense / (safeWithdrawalRate / 100);
-
-    // Investment Income = actual investment return
-    const investmentIncome = balance * (annualReturn / 100);
-
-    // Safe withdrawal amount (4% rule)
-    const safeWithdrawalAmount = balance * (safeWithdrawalRate / 100);
-
-    // Two milestones:
-    // 1. Income Crossover: when investment returns > expenses (aggressive)
-    const isIncomeCrossover = investmentIncome >= adjustedAnnualExpense;
-    // 2. Safe FIRE: when safe withdrawal (4%) > expenses (conservative)
-    const isFireAchieved = safeWithdrawalAmount >= adjustedAnnualExpense;
-
-    // Determine if retirement is triggered based on chosen strategy
-    const isRetired = retirementStrategy === "income_crossover"
-      ? isIncomeCrossover
-      : isFireAchieved;
-
-    const shouldContribute = age < retirementAge && !isRetired;
-    const annualContribution = shouldContribute ? monthlyContribution * 12 : 0;
-
-    projection.push({
-      age,
-      year,
-      balance: Math.round(balance),
-      annualContribution,
-      annualExpense: Math.round(adjustedAnnualExpense),
-      investmentIncome: Math.round(investmentIncome),
-      safeWithdrawalAmount: Math.round(safeWithdrawalAmount),
-      fireNumber: Math.round(fireNumber),
-      isFireAchieved,
-      isIncomeCrossover,
-    });
-
-    const growth = balance * (annualReturn / 100);
-
-    // Subtract expenses once retired (living off portfolio)
-    const withdrawal = isRetired ? adjustedAnnualExpense : 0;
-
-    balance = balance + growth + annualContribution - withdrawal;
-  }
-
-  return projection;
-};
-
-const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
-};
 
 const exportToCSV = (projection: YearlyData[], inputs: FireInputs, budget: BudgetInputs) => {
   const headers = ["Year", "Age", "Investment Balance", "Annual Contribution", "Annual Expenses", "Investment Income", "Safe Withdrawal", "FIRE Number", "Income Crossover", "Safe FIRE"];
@@ -364,7 +266,9 @@ export default function Home() {
   // Load scenario when selected
   useEffect(() => {
     if (selectedScenario) {
-      setInputs({
+      // Saved scenarios have no retirement-trigger column, so keep the current choice.
+      setInputs((prev) => ({
+        ...prev,
         currentBalance: parseFloat(selectedScenario.currentBalance),
         annualReturn: parseFloat(selectedScenario.annualReturn),
         monthlyContribution: parseFloat(selectedScenario.monthlyContribution),
@@ -373,7 +277,7 @@ export default function Home() {
         retirementAge: selectedScenario.retirementAge,
         inflationRate: parseFloat(selectedScenario.inflationRate),
         safeWithdrawalRate: parseFloat(selectedScenario.safeWithdrawalRate),
-      });
+      }));
       setScenarioName(selectedScenario.name);
       toast.success(`Loaded scenario: ${selectedScenario.name}`);
     }
